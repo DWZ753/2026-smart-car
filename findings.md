@@ -1,0 +1,334 @@
+# MSPM0 工程分析与后续开发依据
+
+**归档说明**: 本文记录 2026-10-14 对 ti_cup 固定分支的分析。
+2026-10-15 复制至本工程保留历史依据，旧 SDK、绝对路径和命令
+不代表当前工程配置；当前开发范围以 pvc_control_plan.md 为准。
+Debug 内归档构建/迁移脚本不应作为当前工程的日常构建入口。
+
+**分析日期**: 2026-10-14。
+
+**后续参考顺序**: 用户明确指定 2026h 是最新应用，优先参考它的实际使用方式。
+深入分析见 [2026h 应用分析](2026h_application_analysis.md)。
+本文以下主要分析 main 的公共驱动基线，不能直接代替 2026h 的应用契约。
+
+**基线**: main，提交 e09a1dd。开始时工作区干净。
+
+**结论**: 该工程可作为 MSPM0G3507 公共驱动基线，但尚未组成完整应用。
+现有主机测试和本机固件编译通过；部分硬件时序、并发和输入边界仍需处理。
+本次仅新增分析文档，未修改固件、切换分支、提交或操作目标板。
+
+## 初步事实
+
+- 当前分支 main，分析开始时工作区干净。
+- main.c 为公共基线入口，while 循环为空。
+- Board_Init 仅启动双 PIT 和毫秒 tick，未初始化设备模块。
+- main 和 Board_Init 均调用 SYSCFG_DL_init，存在重复初始化。
+- README 和 CLAUDE.md 部分描述已过时，后续结论以源码为准。
+- 本机存在 Debug/main_validation/build_validation.py 和软件测试脚本。
+
+## 官方入口
+
+- [MSPM0G3507 产品资料](https://www.ti.com/product/MSPM0G3507)
+- [器件数据手册](https://www.ti.com/lit/ds/symlink/mspm0g3507.pdf)
+- [TI 官方 SDK 仓库](https://github.com/TexasInstruments/mspm0-sdk)
+
+## 已确认的控制与时序事实
+
+- PID 为增量式，Ki/Kd 已包含固定采样周期的影响。
+- Motor_SetSpeed/LR 为速度参数到 PWM 的开环映射，模块内部无 PID。
+- 编码器按 A 上升沿读取 B，330 脉冲/输出轴转为当前代码假设。
+- 20 ms 控制 tick，3 tick 测速窗口，即每 60 ms 更新速度。
+- IMU dt=0.01 s，但头文件建议 2 ms；不能按旧注释安排调度。
+- 舵机配置实际计数频率 5 MHz、周期 20000，即 4 ms。
+- 超声波使用 1 MHz、20 ms 回绕计数器，仅能获得模 20 ms 脉宽。
+- I2C_Write 只填一次 FIFO，忽略实际填入数量；OLED 每次仅传 2 字节。
+- UART_PrintfDMA 跨句柄共享静态缓冲区，仅等待当前句柄 DMA 完成。
+- KEY GPIO 使用上拉，软件四个按键均设高有效，需核对接线。
+- GPIOA 组中断定义在 motor.c，同时分发超声波，存在模块耦合。
+
+## 自动验证结果
+
+- 主机软件测试通过：PID、协议边界、UART 边界及总线超时。
+- SysConfig 1.26.2 + SDK 2.10.00.04 重新生成成功，生成文件未变化。
+- TI 编译器 4.0.4.LTS：27 个源文件编译并链接成功。
+- 编译产生两个 PIT switch 未覆盖枚举值警告。
+- 链接 MAP：FLASH 已用 0x1d90=7568 B；SRAM 已用 0x407=1031 B。
+  主循环未启用设备，大量未引用函数被链接器移除，不能代表完整应用。
+- 通用 cppcheck 技能扫描 modules（warning）零发现。
+  补齐工程和 SDK include 后扫描亦完成，但 CMSIS 报 Unknown compiler。
+  该扫描未完整模拟 TI 编译器预定义宏，只能提供辅助线索。
+  不能据此认为已覆盖运行时问题，也未进行 MISRA 合规认证。
+
+## 官方依据
+
+- [SDK 2.10 发布说明](https://software-dl.ti.com/msp430/esd/MSPM0-SDK/2_10_00_04/release_notes_mspm0_sdk_2_10_00_04.html)
+- [SDK 中文索引](https://software-dl.ti.com/msp430/esd/MSPM0-SDK/2_10_00_04/docs/chinese/MSPM0_SDK_Documentation_Overview_CN.html)
+- [器件勘误 Rev. H](https://www.ti.com/document-viewer/lit/html/SLAZ742)
+
+器件提供 MATHACL，但当前浮点计算不会自动变为 MATHACL 操作。
+生成时钟代码包含 SYSPLL_ERR_01 检查，故不能以旧模板替代。
+
+## 1. 工程定位与分支
+
+当前 main 的实际应用目录仅有 application/comm。
+README 所列 main.md、board.md、application/pid、state_machine 等路径不存在。
+CLAUDE.md 所述 DWT 延时、ADC 灰度、无 CLI 构建及分支目录也与现状不同。
+这些描述不适合直接作为新工程的开发依据。
+
+只读检查本地分支的结果如下。已补充构建 2026h，其余分支未构建。
+
+| 分支 | 当前可见的应用内容 |
+|---|---|
+| main | 入口模板、公共驱动、comm |
+| 2024h | 入口调用 Chassis，但该分支文件树未找到对应 chassis 实现 |
+| 2025e | 当前入口为 IMU 显示测试，另有旧 chassis/gimbal 应用 |
+| 2026h | 最新比赛应用：任务菜单、循迹、视觉球平衡、前馈和遥控；主要参考 |
+| 2026h-dev | 后续 UI/控制改动，可对照限幅与绝对坐标实现，未构建验证 |
+| 2026-sim-car | 较早的循迹/视觉接管、电磁铁、云台使用示例 |
+| 2026-sim-display | 较早的通信驱动显示、计数计时及状态反馈示例 |
+
+模拟赛两个分支各自根目录为 CCS 工程，并非旧文档所述 car/display 子工程。
+
+继续类似工程时，应根据具体应用内容选择基线，并逐项比较
+main.c、board.c/h、empty.syscfg 和 application，不能全盘覆盖赛题配置。
+
+## 2. 真实运行链路
+
+```mermaid
+flowchart TD
+    A[main] --> B[SYSCFG_DL_init]
+    B --> C[Board_Init 再次初始化 SysConfig]
+    C --> D[TIMG12 1 ms 中断]
+    C --> E[TIMG0 20 ms 中断]
+    D --> F[毫秒计数回调]
+    E --> G[当前没有注册应用回调]
+    C --> H[空主循环]
+```
+
+SysConfig 初始化实际包括电源、GPIO、时钟、PWM、PIT、I2C、UART、SPI、DMA。
+两个 PIT 自动启动，但 Motor、Key、Buzzer、IMU、OLED、Servo、Comm 的
+软件 Init/Update 尚未接入，因此“已配置外设”不等于“模块已运行”。
+
+PIT 回调在中断内执行，按注册顺序同步调用，各最多 8 个。
+Init 只使能 NVIC，不清空回调表；重复模块初始化会重复注册。
+RegisterCallback 返回失败，但现有调用方大多忽略返回值。
+当前未显式设置 NVIC 优先级，新增实时任务时要核对优先级和最坏执行时间。
+
+推荐后续启动顺序：一次硬件配置 → 安全输出 → 模块状态初始化及回调注册
+→ 使能任务中断 → 主循环。具体改动应依据目标应用设计。
+
+## 3. 外设与引脚依据
+
+以下来自当前 empty.syscfg 和本次生成的 ti_msp_dl_config.c/h。
+只代表软件配置，未与实物接线或原理图比对。
+
+| 功能 | 外设/引脚 | 时序或约束 |
+|---|---|---|
+| CPU | MSPM0G3507，LQFP-64 | 80 MHz，Cortex-M0+，soft float |
+| 快速 tick | TIMG12 | 10 MHz，LOAD=9999，1 ms |
+| 控制 tick | TIMG0 | 1 MHz，LOAD=19999，20 ms |
+| 电机 PWM | TIMA0 C0=PB14、C1=PA22 | 80 MHz，10000 计数，8 kHz |
+| 电机方向 | M1=PB0/PB21、M2=PB8/PB24 | TB6612，左右安装方向镜像 |
+| 编码器 | M1 A=PA15/B=PA24，M2 A=PA7/B=PA17 | A 上升沿中断，读取 B 判向 |
+| 舵机 PWM | TIMA1 C0=PB2 | 5 MHz，20000 计数，250 Hz |
+| BMI088 SPI | SPI0，SCLK=PA12、MOSI=PA14、MISO=PA13 | 8 bit，MSB first，POL0/PHA0 |
+| BMI088 CS | ACC=PB13、GYRO=PB15 | 生成 GPIO 初始状态均为低 |
+| OLED I2C | I2C0，SDA=PA28、SCL=PA31 | 400 kHz，地址 0x3c，外部上拉需核对 |
+| 调试 UART | UART0，TX=PA10、RX=PA11 | 115200、8N1，TX DMA channel 0 |
+| 树莓派 UART | UART1，TX=PB6、RX=PA9 | 115200、8N1，当前仅配置 RX 中断 |
+| 按键 | PB18/PB23/PB19/PB10 | 四路上拉输入，软件配置高有效 |
+| 灰度 | PB12/PB4/PB1/PB17/PB9/PB16/PB20/PB11 | 八路数字输入，返回低有效位图 |
+| 蜂鸣器 / LED | PB5 / PB22 | 蜂鸣器为低有效 GPIO 开关 |
+| 超声波 | TRIG=PA16、ECHO=PA8 | ECHO 双边沿，复用 TIMG0 |
+| TM1637 | CLK=PB3、DIO=PB7 | GPIO 模拟专用协议 |
+| SWD | SWCLK=PA20、SWDIO=PA19 | 后续配置保留调试引脚 |
+
+舵机若使用常见 50 Hz 器件，需要按器件规格配置 20 ms 周期。
+不能只把 5 MHz 下的 period 改为 100000：TIMA1 是 16 位定时器，
+应先降低计数频率，再调整周期和脉宽换算。
+
+## 4. PID 与电机控制契约
+
+PID 实现位于 modules/algorithm/pid/pid.c，计算过程是：
+
+```text
+e[k] = target - feedback
+I[k] = clamp(I[k-1] + e[k], ±integral_limit)
+Δu = Kp*(e[k]-e[k-1]) + Ki*(I[k]-I[k-1])
+     + Kd*(e[k]-2*e[k-1]+e[k-2])
+u[k] = clamp(u[k-1] + Δu, ±output_limit)
+```
+
+这不是每次直接计算绝对输出的位置式 PID。参数含采样周期影响，
+更换调用周期时应重新换算或调参，不能照搬 Ki/Kd。
+积分限幅约束的是累计误差，输出限幅与实际执行器饱和反馈尚未联动。
+PID_Reset 清历史及输出，但保留目标和参数；切换运行模式时需明确目标策略。
+
+Motor_SetSpeed/LR 将 mm/s 按最大速度比例映射到 PWM。
+反馈测速存在，但不参与该函数，应用层还需建立真正的速度闭环。
+接入 PID 时必须先明确输出单位是 PWM 计数、占空比还是速度校正量。
+若 PID 输出为 PWM，不能直接当 mm/s 传给 Motor_SetSpeedLR。
+
+测速假设为 11 线、30 倍减速、A 相单上升沿，即 330 脉冲/输出轴转。
+当前公式写死 100/11，未使用头文件的编码器参数宏，改宏不会同步改公式。
+轮半径代码为 68 mm，是否实际为直径必须测量确认。
+速度每 60 ms 更新一次，EMA 增益 0.25，会引入额外滞后；
+20 ms 控制环可能连续三次读取同一反馈，应在调参时考虑。
+
+最先验证轮子手动正转的脉冲方向、整转脉冲数和实际轮径，
+再做开环占空比测试和单轮闭环，最后加入双轮协调、循迹或姿态外环。
+
+## 5. 问题优先级与验证方法
+
+下列是源码和配置推导，尚未作为本次固件改动实施。
+优先级按启用相关功能后的影响排序，不表示当前空主循环已触发故障。
+
+| 优先级 | 位置 | 发现与影响 | 下一步验证 |
+|---|---|---|---|
+| 高 | empty.syscfg / servo.c | 舵机周期实际 4 ms；是否可接受取决于舵机规格 | 示波器核对周期及 1/1.5/2 ms 脉宽 |
+| 高 | imu.h:9、28 | dt=10 ms，但注释建议 2 ms，按注释调用会使积分时间比例不符 | 固定调用周期，记录时间戳，验证已知角速度 |
+| 高 | ultrasonic.c:157 | 只算模 20000 的计数差，超过 20 ms 的回波无法还原 | 注入 19/20/23 ms 脉冲和跨周期脉冲 |
+| 高 | uart.c:173 | 多 UART 共用 PrintfDMA 静态缓冲，仅等待当前句柄，另一实例可改写在途数据 | 两路 DMA 交错发送并核对字节 |
+| 高 | uart.c:260、305 | 主循环与满缓冲 ISR 都修改 rxRawTail，读改写可能竞争 | 满缓冲与读操作交错测试 |
+| 高 | oled.c:82 / comm_handler.c | 命令可携带任意非零字符；chr-' ' 未检查字库范围，可能越界读取 | 输入控制字节、0x80 和 UTF-8 文本 |
+| 中 | key.c:13、69 | 上拉与高有效须核对接线；PRESSED 状态未在重新按下时清释放计数，非连续消抖 | 用真实高低电平序列验证事件时刻 |
+| 中 | motor.c:155 / ultrasonic.c:93 | 超声波组 ISR 放在 motor.c，Ultrasonic_Init 本身不使能 GPIOA NVIC | 仅启用超声波、禁用电机时验证回波 |
+| 中 | bmi088.c / 生成 GPIO | 双 CS 初始均低，Init 未先全部释放；初始化没有有效 ID/配置回读失败上报 | 冷启动和 MCU 单独复位，核对 CS/MISO/ID |
+| 中 | i2c.c:128 | 一次填 FIFO，忽略填入数量，没有长传输续填或分块 | 发送超过 FIFO 容量的数据 |
+| 中 | i2c.c:157 | 恢复采用最多 100 个 2 ms 时钟，可能阻塞约 200 ms，未显式生成 STOP 或上报失败 | SDA 持续拉低及 NACK 故障注入 |
+| 中 | main.c:12 / board.c:22 | 重复 SysConfig 初始化会复位外设；PIT 回调注册也不具备幂等性 | 明确唯一初始化入口，验证重复调用策略 |
+| 中 | motor.c:199、256 | 有符号累计计数长时间运行有溢出风险；运行中复位多字段可能与 ISR 竞争 | 边界计数、复位与 ISR 交错验证 |
+| 中 | tools/protocol_test.py:26、128 | PC 编码帧缓冲上限 64，小于 MCU 最大 67 个编码字节，满载帧会被截断 | 0～64 字节载荷跨语言往返 |
+| 中 | tm1637.c:181 | num=-32768 取反再存 int16_t 可能仍为负，随后字库索引可为负 | INT16_MIN 输入边界验证 |
+| 低 | pit_tick 两个 ISR | switch 无 default，当前只开 LOAD 中断，产生编译警告 | 启用其他中断前明确分发策略 |
+
+UART_SendStrDMA 直接使用调用者内存，调用者必须保持缓冲区到 DMA 完成为止。
+阻塞 UART_Printf 也有共享缓冲，不能假定可从主循环和中断同时调用。
+UART 的轮询超时是次数，不能解释为毫秒；DMA 超时不提供返回状态。
+I2C/SPI 也未提供明确的错误传播接口：SPI 超时返回 0 与合法数据无法区分。
+这些接口限制应在需要相应功能时用最小改动处理，不必先重写整个 BSP。
+
+OLED_Clear 发送 8*(128+3)=1048 次两字节 I2C 事务。
+按地址加两数据字节、每字节 9 位估算，400 kHz 总线仅传输就约 71 ms，
+尚未计入软件及 START/STOP 开销。显示刷新不宜放进 1 ms ISR。
+Comm_Update 的同步命令处理也会因此延迟 UART 环形缓冲的消费。
+
+Protocol 和 PH 均有单例状态，不能直接绑定多路 UART，
+也不能让两个解析器同时消费同一个原始 RX 环形缓冲。
+当前 Comm 只处理 0x13 OLED，提供 0x22 距离、0x2f 状态上报；
+imu_report_ms 字段尚未实现。PC 工具中定义命令并不表示 MCU 已支持。
+
+## 6. MSPM0 专有知识与官方资料核对
+
+MSPM0G3507 提供 128 KiB Flash、32 KiB SRAM、DMA、MATHACL 和定时器。
+资源能力以 [TI 产品资料](https://www.ti.com/product/MSPM0G3507) 为准。
+该项目使用 DriverLib 和生成宏，不能直接套用 STM32 HAL、DWT 或 Cortex-M4
+故障寄存器模板。核内无 FPU；MATHACL 需明确调用，不会自动加速普通 float。
+当前 invSqrt 实际为 1/sqrtf，Mahony_Output 每次计算反三角函数。
+优化前应先用 GPIO 翻转和示波器测量 IMU/PID 最坏执行时间。
+
+官方勘误按实际硅片 revision 核对，本次未读取硬件版本。
+相关条目的适用条件如下，不能一律认定当前工程受影响：
+
+- SYSPLL_ERR_01：本次生成代码已有 PLL 锁定检测及重试。
+  该重试可能持续阻塞；异常启动需结合硬件和具体生成代码排查。
+- [TIMER_ERR_01](https://www.ti.com/document-viewer/lit/html/SLAZ742H/GUID-XXERRATA-CD0T-XX01-XXXX-0000107329.2)：
+  若后续改硬件捕获，避免直接照搬以 ZCOND/LCOND 启动的捕获方案，
+  按官方捕获示例采用对应规避。
+- [TIMER_ERR_06](https://www.ti.com/document-viewer/lit/html/SLAZ742H/GUID-XXERRATA-CD0T-XX01-XXXX-XX0000108806)：
+  停止计数器应控制 CTRCTL.EN，而非仅禁用 CCLKCTL.CLKEN。
+- [UART_ERR_11](https://www.ti.com/document-viewer/lit/html/SLAZ742H/GUID-XXERRATA-CD0T-XX01-XXXX-XX0000109995)：
+  若启用 RX timeout，需按条目核对 RXTOSEL；当前没有启用该中断。
+- [UART_ERR_01](https://www.ti.com/document-viewer/lit/html/SLAZ742H/GUID-XXERRATA-CD0T-XX01-XXXX-0000108137.1)：
+  与 STANDBY1 中重复 UART 起始条件有关，当前主循环没有进入该模式。
+
+BMI088 加速度计 SPI 读多一个 dummy byte 的处理在当前代码中已实现。
+但上电模式切换与正常采样前的时序仍需结合双 CS 初态核对；
+不能把“读数据时的 dummy byte”和“上电切换 SPI 的操作”混为一谈。
+依据为 [Bosch 数据手册](https://www.bosch-sensortec.com/media/boschsensortec/downloads/datasheets/bst-bmi088-ds001.pdf)
+第 3 和 6.1 节。初始化目前总是返回成功，IMU 也没有处理失败；
+无效 gyro ID 时保留旧数据，应用层无法获知数据失效。
+六轴姿态解算的 yaw 无绝对航向观测，长期航向任务需处理漂移。
+
+后续优先查本机 SDK 2.10 示例，而不是只看最新 SDK 的函数签名。
+本机同时安装 2.11，不意味着本工程已经升级。
+
+| 需求 | SDK examples/nortos/LP_MSPM0G3507/driverlib 下的参考 |
+|---|---|
+| I2C 长数据发送 | i2c_controller_rw_multibyte_fifo_poll / fifo_interrupts |
+| UART TX DMA | uart_tx_multibyte_fifo_dma_interrupts |
+| UART RX DMA | uart_rx_multibyte_fifo_dma_interrupts |
+| GPIO 捕获 | gpio_input_capture |
+
+上述目录已在本机确认存在；具体移植仍需重新选择引脚、DMA 和中断。
+
+## 7. 本机工具与复现命令
+
+| 工具 | 本次状态 | 适用范围 |
+|---|---|---|
+| CCS 工程配置 | 已读取 .ccsproject/.cproject/.project | IDE 标准导入与构建 |
+| SysConfig 1.26.2 | 已运行 | 检查配置，生成设备宏和链接脚本 |
+| tiarmclang 4.0.4.LTS | 已运行 | 本机固件编译链接 |
+| 主机 GCC 16.2.0 | 已运行软件测试 | 与 mock 接口绑定的驱动回归 |
+| cppcheck 2.21.0 | 已运行，预定义宏存在限制 | 辅助静态检查 |
+| TI tiarmsize / MAP | 已运行 | TI ELF 的链接资源占用 |
+| tiarmclang-tidy | 编译器 bin 中存在，未运行 | 需要正确的编译数据库 |
+| gdb-multiarch 17.1 | --version 成功 | 符号调试客户端 |
+| J-Link GDB Server | 常见路径找到 V4.90，未运行 | 设备支持及探针连接尚未验证 |
+| OpenOCD | PATH 未发现 | 不认定系统其他位置不存在 |
+
+J-Link 检测技能脚本因 shared/tool_config 缺少 set_tool_path 导入失败。
+旧 V4.90 安装目录下的程序不能据此认定支持 MSPM0G3507。
+CCS 的 J-Link 配置存在，但本次没有做连接、复位或下载测试。
+[SEGGER 的 MSPM0G 文档](https://kb.segger.com/TI_MSPM0G) 可用于核对设备支持。
+不能把该技能的 SWO 能力直接用于 MSPM0G3507；Cortex-M0+ 无 SWO，
+见 [SEGGER 官方说明](https://www.segger.com/downloads/jlink/UM08024_JLinkOBSTM32F072.pdf)。
+该项目优先用 UART 或 GPIO 时序测量观察运行情况。
+
+工程根目录下运行软件测试：
+
+```powershell
+python tools\run_software_tests.py
+```
+
+本机固件验证流程：
+
+```powershell
+& E:\ti\ccs2050\sysconfig_1.26.2\sysconfig_cli.bat `
+  -s E:\ti\ccs2050\mspm0_sdk_2_10_00_04\.metadata\product.json `
+  --script E:\ti\projects\ti_cup\empty.syscfg `
+  -o E:\ti\projects\ti_cup\Debug\main_validation --compiler ticlang
+
+python Debug\main_validation\build_validation.py
+
+& E:\ti\ccs2050\ccs\tools\compiler\ti-cgt-armllvm_4.0.4.LTS\bin\tiarmsize.exe `
+  Debug\main_validation\main_validation.out
+```
+
+build_validation.py 已存在于忽略目录 Debug，含本机绝对路径，未被 Git 跟踪。
+当前可使用，但全新克隆不会自带它；也不等同于已经实测 CCS GUI Build。
+新工程若需命令行构建，应在具体开发任务中提供受版本管理的构建入口。
+CCS 的源排除规则与该验证脚本目前一致：tests、modules/zdt_motor、
+application/gimbal 被排除。zdt_motor 的 MOTOR_INST 映射在当前配置不存在，
+因此本次不能声称所有仓库模块都已编译验证。
+
+FLASH 用量 7568/131072 B，约 5.77%；SRAM 1031/32768 B，约 3.15%。
+MAP 中 SRAM 包含 512 B 预留栈，数据和 BSS 共 519 B。
+没有测量运行时最大栈深度，启用 printf、姿态解算及中断嵌套后需重新评估。
+
+## 8. 后续开发顺序与验收
+
+1. 明确目标板、实际外设和应用分支；建立引脚、定时器、DMA 清单。
+   验收：SysConfig 生成成功，宏与实物接线逐项一致。
+2. 清晰定义一次初始化、GPIO 组中断职责和固定周期调度。
+   验收：1/20 ms tick 实测正确，回调不重复，最坏执行时间可接受。
+3. 按需求修复并启用单个模块；先通信、输入和采样，再输出控制。
+   验收：边界回归通过，外设时序正确，异常数据可以被应用识别。
+4. 先调单环，再接入串级控制或任务状态机。
+   验收：单位、方向、周期、限幅及反馈延迟全部明确，遥测可解释响应。
+5. 加入显示与通信上报，控制刷新频率，实测运行栈和丢帧情况。
+   验收：控制周期不因 OLED/串口阻塞失守，整机长时间运行结果可复现。
+
+本报告已足以继续讨论和实现类似工程的具体模块。
+仍未知的硬件事实包括接线、轮径、编码器实测 PPR、舵机规格、
+BMI088 板级供电及探针实际支持；这些不能用编译或 mock 测试代替。
