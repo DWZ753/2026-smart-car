@@ -44,6 +44,7 @@
                                     <listOptionValue value="${PROJECT_ROOT}/application"/>
                                     <listOptionValue value="${PROJECT_ROOT}/application/chassis"/>
                                     <listOptionValue value="${PROJECT_ROOT}/application/race"/>
+                                    <listOptionValue value="${PROJECT_ROOT}/application/menu"/>
                                     <listOptionValue value="${PROJECT_ROOT}/modules/vision"/>
                                     <listOptionValue value="${PROJECT_ROOT}/modules/slope"/>
                                     <listOptionValue value="${PROJECT_ROOT}/bsp/delay"/>

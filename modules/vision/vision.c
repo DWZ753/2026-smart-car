@@ -30,11 +30,32 @@ static bool Vision_CheckFrame(void)
 		sum = (uint8_t)(sum + frame_p[index]);
 	}
 
-	return frame_p[0] == 0x55U && frame_p[1] == 0xAAU &&
-		frame_p[12] == 0x0DU && frame_p[11] == sum &&
-		frame_p[3] <= 6U && frame_p[4] <= 3U &&
-		frame_p[8] <= 100U && frame_p[9] <= 100U &&
-		frame_p[10] <= 1U && dev_raw >= -1000 && dev_raw <= 1000;
+	if (frame_p[12] != 0x0DU)
+	{
+		vision_state.status.tail_errors++;
+
+		return false;
+	}
+
+	if (frame_p[11] != sum)
+	{
+		vision_state.status.checksum_errors++;
+
+		return false;
+	}
+
+	if (frame_p[3] > 6U || frame_p[4] > 3U ||
+		frame_p[8] > 100U || frame_p[9] > 100U || frame_p[10] > 1U ||
+		dev_raw < -1000 || dev_raw > 1000)
+	{
+		vision_state.status.range_errors++;
+
+		return false;
+	}
+
+	vision_state.status.checked_frames++;
+
+	return true;
 }
 
 /** @brief 发布新测量，拒绝重复和短时间内的倒序帧。
@@ -61,6 +82,7 @@ static bool Vision_Publish(uint32_t now_ms)
 		VISION_SEQUENCE_RESET_MS)
 	{
 		status_p->rejected++;
+		status_p->sequence_errors++;
 
 		return false;
 	}
@@ -104,6 +126,27 @@ void Vision_Init(void)
 bool Vision_FeedByte(uint8_t byte, uint32_t now_ms)
 {
 	bool accepted = false;
+	vision_status_t *status_p = &vision_state.status;
+
+	status_p->bytes_received++;
+	status_p->last_byte_ms = now_ms;
+
+	if (status_p->raw_length < sizeof(status_p->raw))
+	{
+		status_p->raw_length++;
+	}
+	else
+	{
+		memmove(status_p->raw, &status_p->raw[1], sizeof(status_p->raw) - 1U);
+	}
+
+	status_p->raw[status_p->raw_length - 1U] = byte;
+
+	if (status_p->raw_length >= 2U &&
+		status_p->raw[status_p->raw_length - 2U] == 0x55U && byte == 0xAAU)
+	{
+		status_p->sync_hits++;
+	}
 
 	vision_state.bytes[vision_state.length++] = byte;
 

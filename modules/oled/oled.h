@@ -2,6 +2,7 @@
 #define __OLED_H
 
 #include <stdint.h>
+#include <stdbool.h>
 
 #define OLED_CMD  0
 #define OLED_DATA 1
@@ -110,5 +111,26 @@ void OLED_DrawBMP(uint8_t x, uint8_t y, uint8_t sizex, uint8_t sizey, uint8_t BM
  * @note 委托给 I2C 模块的 I2C_SDAUnlock，通过模拟 SCL 时钟脉冲尝试释放 SDA 线
  */
 void OLED_SDAUnlock(void);
+
+/** @brief 获取现有 6x8 字库的只读字符数据。
+ * @param character ASCII，非法值替换为问号。
+ * @retval 六列字模指针。
+ */
+const uint8_t *OLED_GetGlyph(uint8_t character);
+
+/** @brief 提交内存画布，后续通过小块刷新输出。
+ * @param frame_p 1024 字节页布局画布，刷新期间不可改写。
+ * @retval true 已提交；false 忙或屏幕已离线。
+ */
+bool OLED_Present(const uint8_t *frame_p);
+
+/** @brief 单次最多刷新一个 7 字节脏块，不做延时恢复。 @retval 无。 */
+void OLED_RefreshStep(void);
+
+/** @brief 查询是否仍占用已提交画布。 @retval true 刷新尚未结束。 */
+bool OLED_IsRefreshBusy(void);
+
+/** @brief 查询显示是否可用。 @retval false 连续失败，重启后重新初始化。 */
+bool OLED_IsReady(void);
 
 #endif

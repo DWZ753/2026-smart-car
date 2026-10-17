@@ -5,6 +5,7 @@
 
 #define UART_MAX_INSTANCES 4
 #define UART_DMA_TIMEOUT_CNT 1000000U
+#define UART_RX_IRQ_BUDGET 16U
 
 /* ========== 句柄注册表 ========== */
 static UART_Handle g_handle_pool[UART_MAX_INSTANCES];
@@ -225,6 +226,7 @@ void UART_SendData(UART_Handle *h, const uint8_t *data, uint16_t len)
 
 void UART_StartReceive(UART_Handle *h)
 {
+    DL_UART_disableInterrupt(h->uart, DL_UART_INTERRUPT_RX_TIMEOUT_ERROR);
     h->rxMode = UART_RX_MODE_LINE;
     h->rxPos  = 0;
     h->rxDone = 0;
@@ -236,21 +238,46 @@ void UART_StartReceive(UART_Handle *h)
 
 void UART_StartReceiveRaw(UART_Handle *h)
 {
+	uint32_t primask = __get_PRIMASK();
+
+	__disable_irq();
     h->rxMode     = UART_RX_MODE_RAW;
     h->rxRawHead  = 0;
     h->rxRawTail  = 0;
     h->rxDone     = 0;
+	h->rx_status = (uart_rx_status_t){0};
+	DL_UART_enableFIFOs(h->uart);
+	DL_UART_setRXFIFOThreshold(h->uart, DL_UART_RX_FIFO_LEVEL_ONE_ENTRY);
+	DL_UART_setRXInterruptTimeout(h->uart, 4U);
+	DL_UART_enableInterrupt(h->uart, DL_UART_INTERRUPT_RX |
+		DL_UART_INTERRUPT_RX_TIMEOUT_ERROR);
+	__set_PRIMASK(primask);
+}
+
+uart_rx_status_t UART_GetRxStatus(const UART_Handle *h_p)
+{
+	uint32_t primask = __get_PRIMASK();
+	uart_rx_status_t status = {0};
+
+	__disable_irq();
+	status = h_p->rx_status;
+	__set_PRIMASK(primask);
+
+	return status;
 }
 
 uint16_t UART_RawRxAvailable(UART_Handle *h)
 {
+    uint16_t head = h->rxRawHead;
+    uint16_t tail = h->rxRawTail;
+
     if (h->rxMode != UART_RX_MODE_RAW) return 0;
-    if (h->rxRawHead >= h->rxRawTail)
+    if (head >= tail)
     {
-        return h->rxRawHead - h->rxRawTail;
+        return head - tail;
     } else
     {
-        return UART_RX_BUF_SIZE - h->rxRawTail + h->rxRawHead;
+        return UART_RX_BUF_SIZE - tail + head;
     }
 }
 
@@ -284,6 +311,8 @@ void UART_HandleIRQ(UART_Handle *h)
 {
     uint16_t next_head;
     uint8_t byte;
+	uint32_t raw = 0U;
+	uint8_t budget = UART_RX_IRQ_BUDGET;
 
     switch (DL_UART_getPendingInterrupt(h->uart))
     {
@@ -291,26 +320,34 @@ void UART_HandleIRQ(UART_Handle *h)
             h->txDMADone = 1;
             break;
         case DL_UART_IIDX_RX:
+        case DL_UART_IIDX_RX_TIMEOUT_ERROR:
             if (h->rxMode == UART_RX_MODE_RAW)
             {
-                /* 原始模式：持续接收，写入环形缓冲区 */
-                h->rxRawBuf[h->rxRawHead] =
-                    DL_UART_receiveData(h->uart);
-                next_head = h->rxRawHead + 1;
-                if (next_head >= UART_RX_BUF_SIZE)
-                {
-                    next_head = 0;
-                }
-                /* 若 head 追上 tail，丢弃最旧字节 */
-                if (next_head == h->rxRawTail)
-                {
-                    ++h->rxRawTail;
-                    if (h->rxRawTail >= UART_RX_BUF_SIZE)
-                    {
-                        h->rxRawTail = 0;
-                    }
-                }
-                h->rxRawHead = next_head;
+				while (budget > 0U && !DL_UART_isRXFIFOEmpty(h->uart))
+				{
+					/* RXDATA 读一次，同时取得字节及错误位，避免重复出队。 */
+					raw = h->uart->RXDATA;
+					h->rx_status.received++;
+					h->rx_status.overruns +=
+						(raw & DL_UART_ERROR_OVERRUN) != 0U;
+					h->rx_status.errors += (raw & (DL_UART_ERROR_FRAMING |
+						DL_UART_ERROR_PARITY | DL_UART_ERROR_BREAK)) != 0U;
+					next_head = (uint16_t)((h->rxRawHead + 1U) %
+						UART_RX_BUF_SIZE);
+
+					if (next_head == h->rxRawTail)
+					{
+						/* 满时丢弃新字节，ISR 不修改消费者的 tail。 */
+						h->rx_status.dropped++;
+					}
+					else
+					{
+						h->rxRawBuf[h->rxRawHead] = (uint8_t)raw;
+						h->rxRawHead = next_head;
+					}
+
+					budget--;
+				}
             } else
             {
                 /* 行模式：检测结束符 */

@@ -6,6 +6,7 @@
 
 #define VISION_FRAME_SIZE 13U
 #define VISION_SEQUENCE_RESET_MS 100U
+#define VISION_RAW_BYTES 24U
 
 /** 当前参考路径观测；sample_id 仅在接受独立新测量后递增。 */
 typedef struct
@@ -30,6 +31,16 @@ typedef struct
 	uint32_t rejected;
 	uint32_t duplicates;
 	uint32_t discontinuities;
+	uint32_t bytes_received;
+	uint32_t last_byte_ms;
+	uint32_t sync_hits;
+	uint32_t checked_frames;
+	uint32_t tail_errors;
+	uint32_t checksum_errors;
+	uint32_t range_errors;
+	uint32_t sequence_errors;
+	uint8_t raw[VISION_RAW_BYTES];
+	uint8_t raw_length;
 } vision_status_t;
 
 /** @brief 清空接收状态。 @retval 无。 */

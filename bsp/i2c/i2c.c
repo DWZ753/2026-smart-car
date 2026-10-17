@@ -4,6 +4,7 @@
 
 #define I2C_MAX_INSTANCES 2
 #define I2C_TIMEOUT_CNT   100000
+#define I2C_SHORT_TIMEOUT_CNT 5000U
 
 /* ========== 句柄注册表 ========== */
 static I2C_Handle g_handle_pool[I2C_MAX_INSTANCES];
@@ -143,4 +144,96 @@ void I2C_SDAUnlock(I2C_Handle *h)
             break;
     } while (++cycleCnt < 100);
     i2c_enable(h);
+}
+
+/** @brief 有限轮询清空 TX FIFO，避免 SDK 内部无限等待。
+ * @param i2c_p I2C 外设。
+ * @retval true 已清空；false 等待超时。
+ */
+static bool I2C_FlushTx(I2C_Regs *i2c_p)
+{
+	uint32_t polls = I2C_SHORT_TIMEOUT_CNT;
+	bool empty = false;
+
+	DL_I2C_startFlushControllerTXFIFO(i2c_p);
+
+	while (polls > 0U)
+	{
+		if (DL_I2C_isControllerTXFIFOEmpty(i2c_p))
+		{
+			empty = true;
+
+			break;
+		}
+
+		polls--;
+	}
+
+	DL_I2C_stopFlushControllerTXFIFO(i2c_p);
+
+	return empty;
+}
+
+bool I2C_TryWrite(I2C_Handle *h_p, uint8_t address,
+	const uint8_t *data_p, uint16_t length)
+{
+	uint32_t polls = I2C_SHORT_TIMEOUT_CNT;
+	uint32_t interrupts = DL_I2C_INTERRUPT_CONTROLLER_TX_DONE |
+		DL_I2C_INTERRUPT_CONTROLLER_NACK;
+
+	if (h_p == NULL || data_p == NULL || length == 0U || length > 8U)
+	{
+		return false;
+	}
+
+	/* TX_DONE 后 STOP 尚未结束时，允许控制器短暂忙。 */
+	while ((DL_I2C_getControllerStatus(h_p->i2c) &
+		DL_I2C_CONTROLLER_STATUS_IDLE) == 0U)
+	{
+		if (polls == 0U)
+		{
+			return false;
+		}
+
+		polls--;
+	}
+
+	if (!I2C_FlushTx(h_p->i2c))
+	{
+		return false;
+	}
+	DL_I2C_clearInterruptStatus(h_p->i2c, interrupts);
+
+	if (DL_I2C_fillControllerTXFIFO(h_p->i2c, data_p, length) != length)
+	{
+		return false;
+	}
+
+	DL_I2C_startControllerTransfer(h_p->i2c, address,
+		DL_I2C_CONTROLLER_DIRECTION_TX, length);
+
+	/* 地址及数据均需线时，预算随事务长度增加。 */
+	polls = I2C_SHORT_TIMEOUT_CNT * (length + 1U);
+
+	while (polls > 0U)
+	{
+		if (DL_I2C_getRawInterruptStatus(h_p->i2c,
+			DL_I2C_INTERRUPT_CONTROLLER_NACK))
+		{
+			break;
+		}
+
+		if (DL_I2C_getRawInterruptStatus(h_p->i2c,
+			DL_I2C_INTERRUPT_CONTROLLER_TX_DONE))
+		{
+			return true;
+		}
+
+		polls--;
+	}
+
+	DL_I2C_resetControllerTransfer(h_p->i2c);
+	(void)I2C_FlushTx(h_p->i2c);
+
+	return false;
 }

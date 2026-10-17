@@ -16,6 +16,17 @@
 
 /* ========== 类型定义 ========== */
 
+/** 原始接收诊断；received 为读出的硬件字节数，dropped 为软件队列溢出。
+ * overruns 表示硬件报告溢出的字节，errors 表示帧/校验/Break 错误字节。
+ */
+typedef struct
+{
+	uint32_t received;
+	uint32_t dropped;
+	uint32_t overruns;
+	uint32_t errors;
+} uart_rx_status_t;
+
 /** UART 初始化配置 */
 typedef struct {
     UART_Regs  *uart;          // UART 外设基址指针（如 UART0）
@@ -48,6 +59,7 @@ typedef struct {
     volatile uint8_t  rxRawBuf[UART_RX_BUF_SIZE];       // 原始 RX 环形缓冲区
     volatile uint16_t rxRawHead;                        // ISR 写入位置
     volatile uint16_t rxRawTail;                        // 应用读出位置
+    volatile uart_rx_status_t rx_status;
 } UART_Handle;
 
 /* ========== 通用 API ========== */
@@ -59,6 +71,12 @@ typedef struct {
  * @note 调用后 NVIC 中断自动使能；DMA 初始化由 SYSCFG_DL_init() 完成
  */
 UART_Handle* UART_Init(const UART_Config *config);
+
+/** @brief 获取一致的接收诊断快照。
+ * @param h_p 已注册句柄。
+ * @retval 自上次启用原始接收以来的累计计数。
+ */
+uart_rx_status_t UART_GetRxStatus(const UART_Handle *h_p);
 
 /* ---- 字符串 TX（line mode） ---- */
 

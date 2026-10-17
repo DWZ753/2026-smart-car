@@ -1,9 +1,25 @@
 #include "oled.h"
+#include "oled_canvas.h"
 #include "oledfont.h"
 #include "ti_msp_dl_config.h"
 #include "i2c.h"
 #include "delay.h"
+#include <string.h>
 
+/** 增量刷新只读画布，缓存记录已确认写入屏幕的数据。 */
+typedef struct
+{
+	const uint8_t *frame_p;
+	uint8_t sent[OLED_CANVAS_BYTES];
+	uint16_t cursor;
+	uint16_t next_cursor;
+	uint8_t failures;
+	bool position_valid;
+	bool busy;
+	bool ready;
+} oled_refresh_t;
+
+static oled_refresh_t oled_refresh;
 static I2C_Handle *g_oled_i2c;
 
 void OLED_SDAUnlock(void)
@@ -200,6 +216,11 @@ void OLED_Init(void)
     };
     g_oled_i2c = I2C_Init(&i2c_cfg);
 
+    if (g_oled_i2c == NULL)
+    {
+        return;
+    }
+
     if (DL_I2C_getSDAStatus(g_oled_i2c->i2c) == DL_I2C_CONTROLLER_SDA_LOW)
         OLED_SDAUnlock();
 
@@ -234,4 +255,115 @@ void OLED_Init(void)
     OLED_WriteByte(0xA6, OLED_CMD);
     OLED_Clear();
     OLED_WriteByte(0xAF, OLED_CMD);
+    memset(&oled_refresh, 0, sizeof(oled_refresh));
+    oled_refresh.ready = true;
+}
+
+const uint8_t *OLED_GetGlyph(uint8_t character)
+{
+	if (character < ' ' || character > '~')
+	{
+		character = '?';
+	}
+
+	return asc2_0806[character - ' '];
+}
+
+bool OLED_Present(const uint8_t *frame_p)
+{
+	if (!oled_refresh.ready || oled_refresh.busy || frame_p == NULL)
+	{
+		return false;
+	}
+
+	oled_refresh.frame_p = frame_p;
+	oled_refresh.cursor = 0U;
+	oled_refresh.position_valid = false;
+	oled_refresh.busy = true;
+
+	return true;
+}
+
+void OLED_RefreshStep(void)
+{
+	uint16_t cursor = oled_refresh.cursor;
+	uint8_t column = 0U;
+	uint8_t length = 0U;
+	uint8_t commands[4] = {0U};
+	uint8_t data[8] = {0x40U};
+	bool success = false;
+
+	if (!oled_refresh.ready || !oled_refresh.busy)
+	{
+		return;
+	}
+
+	while (cursor < sizeof(oled_refresh.sent) &&
+		oled_refresh.sent[cursor] == oled_refresh.frame_p[cursor])
+	{
+		cursor++;
+	}
+
+	if (cursor == sizeof(oled_refresh.sent))
+	{
+		oled_refresh.busy = false;
+
+		return;
+	}
+
+	column = (uint8_t)(cursor % OLED_CANVAS_WIDTH);
+	length = (uint8_t)(OLED_CANVAS_WIDTH - column);
+
+	if (length > sizeof(data) - 1U)
+	{
+		length = sizeof(data) - 1U;
+	}
+
+	commands[1] = (uint8_t)(0xB0U + cursor / OLED_CANVAS_WIDTH);
+	commands[2] = column & 0x0FU;
+	commands[3] = 0x10U | (column >> 4);
+	memcpy(&data[1], &oled_refresh.frame_p[cursor], length);
+	/* 同页连续数据使用屏幕自动增列，跳过重复定位事务。 */
+	success = true;
+
+	if (!oled_refresh.position_valid || cursor != oled_refresh.next_cursor)
+	{
+		success = I2C_TryWrite(g_oled_i2c, 0x3CU,
+			commands, sizeof(commands));
+	}
+
+	if (success)
+	{
+		success = I2C_TryWrite(g_oled_i2c, 0x3CU, data, length + 1U);
+	}
+
+	if (success)
+	{
+		memcpy(&oled_refresh.sent[cursor], &data[1], length);
+		oled_refresh.cursor = cursor + length;
+		oled_refresh.next_cursor = cursor + length;
+		oled_refresh.position_valid = column + length < OLED_CANVAS_WIDTH;
+		oled_refresh.failures = 0U;
+	}
+	else
+	{
+		oled_refresh.position_valid = false;
+		oled_refresh.failures++;
+
+		if (oled_refresh.failures >= 5U)
+		{
+			oled_refresh.ready = false;
+			oled_refresh.busy = false;
+		}
+	}
+}
+
+bool OLED_IsRefreshBusy(void)
+{
+	return oled_refresh.busy;
+}
+
+bool OLED_IsReady(void)
+{
+	return oled_refresh.ready;
 }

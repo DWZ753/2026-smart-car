@@ -18,7 +18,7 @@ empty.c 是原始模板，保留文件但排除编译，实际入口为 main.c�
 入口已接入分级智能车应用，默认 CAR_STAGE=1，只收 UART3 视觉帧。
 联调级别和参数在 [car_config.h](application/car_config.h)；
 使用步骤见 [首版应用说明](application/car_app.md)。
-二级及以上需要 KEY1 释放事件启动，KEY2 释放事件停止；没有自动起步。
+二级及以上在 Run status 菜单选择 Start 并确认启动；KEY4 返回兼停止。
 
 ## 引脚表
 
@@ -77,3 +77,11 @@ python tools\run_software_tests.py
 
 [分析资料索引](analysis_index.md)汇总当前 PVC 方案、PID 问题及历史分析证据。
 当前按低速开环、视觉 dev/k 跟踪和 IMU pitch 坡道判断推进。
+
+## OLED 菜单
+
+默认 CAR_ENABLE_MENU=1，一至四级均可查看菜单；
+KEY1/KEY2/KEY3/KEY4 分别为上、下、确认、返回；返回同时发布停止。
+首页为磁贴，二级为可滚动列表；确认只读数据可查看弹窗，控制配置只读。
+动画预览：Debug/oled_tests/menu_animation.html。
+移植范围、刷新策略与验证步骤见 [菜单说明](application/menu/car_menu.md)。

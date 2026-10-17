@@ -3,6 +3,7 @@
 **维护位置**: E:/ti/projects/2026_smart_car。
 **更新日期**: 2026-10-15。
 
+- [OLED 菜单与联调说明](application/menu/car_menu.md)。
 - [已实现的分级应用与联调说明](application/car_app.md)。
 - [当前 PVC 低速控制方案](pvc_control_plan.md)。
 - [PID 参数与使用问题](pid_parameter_review.md)。

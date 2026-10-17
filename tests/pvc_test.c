@@ -201,6 +201,75 @@ static vision_sample_t Test_Sample(void)
 	return sample;
 }
 
+/** @brief 区分字节到达、合法重复、尾字节/校验/范围/序号错误。 */
+static void Test_VisionDiagnostics(void)
+{
+	uint8_t frame[VISION_FRAME_SIZE] =
+	{
+		0x55U, 0xAAU, 1U, 0U, 0U, 0U, 0U,
+		0U, 90U, 80U, 0U, 0U, 0x0DU
+	};
+	vision_status_t status = {0};
+	uint32_t index = 0U;
+
+	Vision_Init();
+	Vision_FeedByte(0x35U, 1U);
+	Test_Checksum(frame);
+	Test_Feed(frame, 10U);
+	Test_Feed(frame, 20U);
+	status = Vision_GetStatus();
+	assert(status.bytes_received == 1U + 2U * sizeof(frame));
+	assert(status.raw_length == VISION_RAW_BYTES);
+	assert(status.accepted == 1U && status.duplicates == 1U);
+	assert(status.checked_frames == 2U && status.sync_hits == 2U);
+	assert(status.last_byte_ms == 20U && status.sample.received_ms == 10U);
+	frame[2] = 2U;
+	Test_Checksum(frame);
+	frame[11] ^= 1U;
+	Test_Feed(frame, 30U);
+	assert(Vision_GetStatus().checksum_errors == 1U);
+	Test_Checksum(frame);
+	Test_Feed(frame, 40U);
+	assert(Vision_GetStatus().accepted == 2U);
+	frame[2] = 3U;
+	Test_Checksum(frame);
+	frame[12] = 0U;
+	Test_Feed(frame, 50U);
+	assert(Vision_GetStatus().tail_errors == 1U);
+	frame[12] = 0x0DU;
+	Test_Feed(frame, 60U);
+	frame[2] = 4U;
+	frame[8] = 101U;
+	Test_Checksum(frame);
+	Test_Feed(frame, 70U);
+	assert(Vision_GetStatus().range_errors == 1U);
+	frame[8] = 90U;
+	Test_Checksum(frame);
+	Test_Feed(frame, 80U);
+	frame[2] = 2U;
+	Test_Checksum(frame);
+	Test_Feed(frame, 81U);
+	status = Vision_GetStatus();
+	assert(status.sequence_errors == 1U && status.sample.seq == 4U);
+	assert(memcmp(&status.raw[VISION_RAW_BYTES - sizeof(frame)],
+		frame, sizeof(frame)) == 0);
+
+	/* 连续流跨越序号回绕，带错位噪声和坏帧仍可持续找回帧头。 */
+	Vision_Init();
+
+	for (index = 0U; index < 300U; index++)
+	{
+		frame[2] = (uint8_t)index;
+		Test_Checksum(frame);
+		Vision_FeedByte(0x55U, index * 17U);
+		Vision_FeedByte(0x99U, index * 17U);
+		Test_Feed(frame, index * 17U);
+	}
+
+	assert(Vision_GetStatus().accepted == 300U);
+	assert(Vision_GetStatus().sample.received_ms == 299U * 17U);
+}
+
 /** @brief 验证启动条件、短暂丢线、超时与停止后不自动重启。 */
 static void Test_RaceFault(void)
 {
@@ -372,6 +441,7 @@ static void Test_Chassis(void)
 int main(void)
 {
 	Test_Vision();
+	Test_VisionDiagnostics();
 	Test_RaceFault();
 	Test_Finish();
 	Test_Slope();

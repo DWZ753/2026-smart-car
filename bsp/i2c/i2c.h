@@ -2,6 +2,7 @@
 #define __USER_I2C_H__
 
 #include <stdint.h>
+#include <stdbool.h>
 #include "ti_msp_dl_config.h"
 
 /* ========== 类型定义 ========== */
@@ -59,5 +60,15 @@ void I2C_Write(I2C_Handle *h, uint8_t devAddr, uint8_t *data, uint16_t len);
  * @note 通过 GPIO 模拟 SCL 时钟脉冲来释放 SDA 线，每脉冲间隔 1ms，最多 100 次
  */
 void I2C_SDAUnlock(I2C_Handle *h);
+
+/** @brief 尝试发送最多 8 字节，短轮询且不执行延时恢复。
+ * @param h_p 已注册的 I2C 句柄。
+ * @param address 7 位设备地址。
+ * @param data_p 待发送字节。
+ * @param length 字节数，1..8，最多一个硬件 FIFO。
+ * @retval true 传输完成；false 持续忙、NACK 或有限轮询超时。
+ */
+bool I2C_TryWrite(I2C_Handle *h_p, uint8_t address,
+    const uint8_t *data_p, uint16_t length);
 
 #endif

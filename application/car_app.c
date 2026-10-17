@@ -7,7 +7,11 @@
 #include "vision.h"
 #include <stddef.h>
 
-#if (CAR_STAGE >= CAR_STAGE_STEERING)
+#if (CAR_ENABLE_MENU == 1U)
+#include "car_menu.h"
+#endif
+
+#if (CAR_STAGE >= CAR_STAGE_STEERING) || (CAR_ENABLE_MENU == 1U)
 #include "key.h"
 #endif
 
@@ -23,13 +27,16 @@ typedef struct
 	volatile uint32_t key_events;
 	uint32_t last_control_ms;
 	uint32_t late_updates;
+#if (CAR_ENABLE_MENU == 1U)
+	car_menu_model_t menu_model;
+#endif
 } car_state_t;
 
 static car_state_t car_state;
 
-#if (CAR_STAGE >= CAR_STAGE_STEERING)
+#if (CAR_STAGE >= CAR_STAGE_STEERING) || (CAR_ENABLE_MENU == 1U)
 /** @brief 记录已有按键模块的释放事件，不在 ISR 控制执行器。
- * @param key_index 按键索引，0 启动、1 停止。
+ * @param key_index 按键索引，依次为上、下、确认、返回。
  * @retval 无。
  */
 static void Car_KeyEvent(uint8_t key_index)
@@ -49,6 +56,38 @@ static uint32_t Car_TakeKeys(void)
 	__set_PRIMASK(primask);
 
 	return events;
+}
+#endif
+
+#if (CAR_ENABLE_MENU == 1U)
+/** @brief 在主循环低优先级位置提供只读数据并刷新一小块。
+ * @param vision_p 当前视觉快照。
+ * @retval 无。
+ */
+static void Car_MenuService(const vision_status_t *vision_p)
+{
+	car_menu_model_t *model_p = &car_state.menu_model;
+	uart_rx_status_t uart_status = {0};
+
+	model_p->vision = *vision_p;
+	model_p->race = Race_GetOutput();
+	model_p->uart_ready = car_state.uart_p != NULL;
+
+	if (model_p->uart_ready)
+	{
+		uart_status = UART_GetRxStatus(car_state.uart_p);
+		model_p->uart_received = uart_status.received;
+		model_p->uart_dropped = uart_status.dropped;
+		model_p->uart_overruns = uart_status.overruns;
+		model_p->uart_errors = uart_status.errors;
+	}
+
+#if (CAR_STAGE >= CAR_STAGE_SLOPE)
+	model_p->slope = Slope_GetStatus();
+	model_p->pitch_available = true;
+#endif
+
+	Menu_Update(model_p, Board_GetTickMs());
 }
 #endif
 
@@ -78,12 +117,16 @@ void Car_Init(void)
 	Race_Init();
 	Chassis_Init();
 
+#if (CAR_ENABLE_MENU == 1U)
+	Menu_Init();
+#endif
+
 #if (CAR_STAGE >= CAR_STAGE_SLOPE)
 	IMU_Init();
 	Slope_Init(&slope_config);
 #endif
 
-#if (CAR_STAGE >= CAR_STAGE_STEERING)
+#if (CAR_STAGE >= CAR_STAGE_STEERING) || (CAR_ENABLE_MENU == 1U)
 	Key_Init();
 	Key_RegisterCallback(Car_KeyEvent);
 #endif
@@ -109,8 +152,12 @@ void Car_Update(void)
 	race_output_t output = {0};
 	float drive_scale = 1.0f;
 
-#if (CAR_STAGE >= CAR_STAGE_STEERING)
+#if (CAR_STAGE >= CAR_STAGE_STEERING) || (CAR_ENABLE_MENU == 1U)
 	uint32_t keys = 0U;
+
+#if (CAR_ENABLE_MENU == 1U)
+	car_menu_action_e action = CAR_MENU_ACTION_NONE;
+#endif
 #endif
 
 #if (CAR_STAGE >= CAR_STAGE_SLOPE)
@@ -120,12 +167,10 @@ void Car_Update(void)
 	slope_status_t slope = {0};
 #endif
 
-	if (car_state.uart_p == NULL)
+	if (car_state.uart_p != NULL)
 	{
-		return;
+		remaining = UART_RawRxAvailable(car_state.uart_p);
 	}
-
-	remaining = UART_RawRxAvailable(car_state.uart_p);
 
 	while (remaining > 0U)
 	{
@@ -136,17 +181,30 @@ void Car_Update(void)
 
 	vision = Vision_GetStatus();
 
-#if (CAR_STAGE >= CAR_STAGE_STEERING)
+#if (CAR_STAGE >= CAR_STAGE_STEERING) || (CAR_ENABLE_MENU == 1U)
 	keys = Car_TakeKeys();
 
-	/* 同时收到启停事件时停止优先；只靠视觉帧不会重新启动。 */
+#if (CAR_ENABLE_MENU == 1U)
+	action = Menu_KeyEvent(keys);
+#endif
+
+#if (CAR_STAGE >= CAR_STAGE_STEERING)
+	/* 菜单只发布意图，启动条件和输出仍由应用检查。 */
+#if (CAR_ENABLE_MENU == 1U)
+	if (action == CAR_MENU_ACTION_STOP)
+#else
 	if ((keys & 2U) != 0U)
+#endif
 	{
 		Race_Stop(false);
 		output = Race_GetOutput();
 		Chassis_Apply(&output);
 	}
+#if (CAR_ENABLE_MENU == 1U)
+	else if (action == CAR_MENU_ACTION_START)
+#else
 	else if ((keys & 1U) != 0U)
+#endif
 	{
 #if (CAR_STAGE >= CAR_STAGE_SLOPE)
 		slope = Slope_GetStatus();
@@ -154,14 +212,43 @@ void Car_Update(void)
 		if (slope.ready)
 #endif
 		{
+#if (CAR_ENABLE_MENU == 1U)
+			output = Race_GetOutput();
+
+			if (output.enabled)
+			{
+				Menu_ShowMessage("Already running");
+			}
+			else if (!Race_Start(&vision.sample, now_ms))
+			{
+				Menu_ShowMessage("Vision not ready");
+			}
+#else
 			Race_Start(&vision.sample, now_ms);
+#endif
 		}
+#if (CAR_STAGE >= CAR_STAGE_SLOPE) && (CAR_ENABLE_MENU == 1U)
+		else
+		{
+			Menu_ShowMessage("IMU not ready");
+		}
+#endif
 	}
+#elif (CAR_ENABLE_MENU == 1U)
+	if (action == CAR_MENU_ACTION_START)
+	{
+		Menu_ShowMessage("Stage 1: RX only");
+	}
+#endif
 #endif
 
 	if ((uint32_t)(now_ms - car_state.last_control_ms) <
 		CAR_CONTROL_PERIOD_MS)
 	{
+#if (CAR_ENABLE_MENU == 1U)
+		Car_MenuService(&vision);
+#endif
+
 		return;
 	}
 
@@ -192,4 +279,8 @@ void Car_Update(void)
 	Race_Update(&vision.sample, now_ms, drive_scale);
 	output = Race_GetOutput();
 	Chassis_Apply(&output);
+
+#if (CAR_ENABLE_MENU == 1U)
+	Car_MenuService(&vision);
+#endif
 }

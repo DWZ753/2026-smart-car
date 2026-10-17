@@ -60,6 +60,9 @@ static void Test_PID(void)
 static void Test_FeedByte(UART_Handle *uart_p, uint8_t byte)
 {
 	test_hardware.uart_rx_byte = byte;
+	test_hardware.uart_rx_fifo[0] = byte;
+	test_hardware.uart_rx_count = 1U;
+	test_hardware.uart_rx_position = 0U;
 	UART_HandleIRQ(uart_p);
 }
 
@@ -208,6 +211,48 @@ static void Test_UART(UART_Handle *uart_p)
 	assert(UART_SendStr(uart_p, "timeout") == 0);
 	UART_SendByte(uart_p, 1);
 	test_hardware.uart_tx_full = false;
+
+	UART_StartReceiveRaw(uart_p);
+	assert(test_hardware.uart_fifo_enabled);
+	assert(test_hardware.uart_rx_timeout != 0U);
+	test_hardware.uart_rx_fifo[0] = 0x55U;
+	test_hardware.uart_rx_fifo[1] = 0xAAU | DL_UART_ERROR_FRAMING;
+	test_hardware.uart_rx_fifo[2] = 0x0DU | DL_UART_ERROR_OVERRUN;
+	test_hardware.uart_rx_count = 3U;
+	test_hardware.uart_rx_position = 0U;
+	test_hardware.uart_pending = DL_UART_IIDX_RX_TIMEOUT_ERROR;
+	UART_HandleIRQ(uart_p);
+	assert(UART_RawRxAvailable(uart_p) == 3U);
+	assert(UART_ReadRawByte(uart_p) == 0x55U);
+	assert(UART_ReadRawByte(uart_p) == 0xAAU);
+	assert(UART_ReadRawByte(uart_p) == 0x0DU);
+	assert(UART_GetRxStatus(uart_p).received == 3U);
+	assert(UART_GetRxStatus(uart_p).errors == 1U);
+	assert(UART_GetRxStatus(uart_p).overruns == 1U);
+	test_hardware.uart_pending = DL_UART_IIDX_RX;
+
+	for (i = 0U; i < 300U; i++)
+	{
+		Test_FeedByte(uart_p, (uint8_t)i);
+	}
+
+	assert(UART_RawRxAvailable(uart_p) == UART_RX_BUF_SIZE - 1U);
+	assert(UART_GetRxStatus(uart_p).dropped == 45U);
+	assert(UART_ReadRawByte(uart_p) == 0U);
+	UART_FlushRawRx(uart_p);
+
+	for (i = 0U; i < 32U; i++)
+	{
+		test_hardware.uart_rx_fifo[i] = i;
+	}
+
+	test_hardware.uart_rx_count = 32U;
+	test_hardware.uart_rx_position = 0U;
+	UART_HandleIRQ(uart_p);
+	assert(UART_RawRxAvailable(uart_p) == 16U);
+	UART_HandleIRQ(uart_p);
+	assert(UART_RawRxAvailable(uart_p) == 32U);
+	UART_FlushRawRx(uart_p);
 }
 
 /** @brief 记录 I2C 超时后外设重新初始化。 */
@@ -226,6 +271,7 @@ static void Test_BusTimeouts(void)
 	I2C_Config i2c_config = {.i2c = I2C0, .syscfgInit = Test_I2CInit};
 	I2C_Handle *i2c_p = I2C_Init(&i2c_config);
 	uint8_t data[] = {0, 0xAF};
+	uint8_t burst[8] = {0x40U};
 
 	assert(spi_p != NULL && i2c_p != NULL);
 	test_hardware.spi_rx_byte = 0xA5;
@@ -252,6 +298,34 @@ static void Test_BusTimeouts(void)
 	test_hardware.i2c_done = true;
 	I2C_Write(i2c_p, 0x3C, data, sizeof(data));
 	assert(test_hardware.i2c_starts == 2);
+	assert(test_hardware.i2c_init_calls == 2);
+
+	assert(I2C_TryWrite(i2c_p, 0x3C, data, sizeof(data)));
+
+	/* 定位命令结束后，控制器可能还在发送 STOP。 */
+	test_hardware.i2c_idle_delay = 3U;
+	assert(I2C_TryWrite(i2c_p, 0x3C, data, sizeof(data)));
+
+	/* 八字节事务需要比短命令更长的传输等待预算。 */
+	test_hardware.i2c_done_delay = 6000U;
+	assert(I2C_TryWrite(i2c_p, 0x3C, burst, sizeof(burst)));
+
+	/* FIFO 清空异常也必须退出，并关闭清空请求。 */
+	test_hardware.i2c_flush_stuck = true;
+	test_hardware.i2c_flush_polls = 0U;
+	assert(!I2C_TryWrite(i2c_p, 0x3C, data, sizeof(data)));
+	assert(test_hardware.i2c_flush_polls <= 5001U);
+	assert(test_hardware.i2c_flush_starts ==
+		test_hardware.i2c_flush_stops);
+	test_hardware.i2c_flush_stuck = false;
+	test_hardware.i2c_idle = false;
+	assert(!I2C_TryWrite(i2c_p, 0x3C, data, sizeof(data)));
+	test_hardware.i2c_idle = true;
+	test_hardware.i2c_done = false;
+	assert(!I2C_TryWrite(i2c_p, 0x3C, data, sizeof(data)));
+	test_hardware.i2c_done = true;
+	test_hardware.i2c_nack = true;
+	assert(!I2C_TryWrite(i2c_p, 0x3C, data, sizeof(data)));
 	assert(test_hardware.i2c_init_calls == 2);
 }
 
