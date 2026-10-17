@@ -10,10 +10,10 @@ static const struct {
     int pin;
     KeyActiveLevel_t active_level;
 } key_config[KEY_NUM] = {
-    {GPIO_KEYs_KEY1_PIN, KEY_ACTIVE_HIGH},
-    {GPIO_KEYs_KEY2_PIN, KEY_ACTIVE_HIGH},
-    {GPIO_KEYs_KEY3_PIN, KEY_ACTIVE_HIGH},
-    {GPIO_KEYs_KEY4_PIN, KEY_ACTIVE_HIGH}
+    {GPIO_KEYs_KEY1_PIN, KEY_ACTIVE_LOW},
+    {GPIO_KEYs_KEY2_PIN, KEY_ACTIVE_LOW},
+    {GPIO_KEYs_KEY3_PIN, KEY_ACTIVE_LOW},
+    {GPIO_KEYs_KEY4_PIN, KEY_ACTIVE_LOW}
 };
 
 // 按键数组

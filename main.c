@@ -1,18 +1,18 @@
-/**
- * @file main.c
- * @brief 主入口模板（公共驱动基线）
- *
- * 赛题分支基于此文件扩展。完整赛题逻辑见各分支的 main.c。
+/** @file main.c
+ * @brief 硬件初始化及分级裸机应用入口。
  */
-#include "ti_msp_dl_config.h"
 #include "board.h"
+#include "car_app.h"
 
+/** @brief 主程序。 @retval 不返回。 */
 int main(void)
 {
-	SYSCFG_DL_init();
+	/* Board_Init 是唯一的 SYSCFG_DL_init 调用入口。 */
 	Board_Init();
+	Car_Init();
 
 	while (1)
 	{
+		Car_Update();
 	}
 }

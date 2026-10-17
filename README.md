@@ -9,13 +9,16 @@ tiarmclang 4.0.4.LTS、-O2 和 XDS110。
 
 - bsp、modules：main 的公共驱动、PID 和模块文档。
 - application/comm：旧通信应用文件，当前排除编译。
-- main.c、board.c/h：公共驱动入口模板与 PIT 毫秒计数。
+- main.c、board.c/h：唯一板级初始化、PIT 毫秒计数与分级应用入口。
 - tests、tools：主机软件回归测试及串口辅助工具。
 - .gitignore 与 CCS 所需头文件搜索路径、源排除规则。
 
 保留本工程原来的 .project、.ccsproject、targetConfigs 和原有设置。
 empty.c 是原始模板，保留文件但排除编译，实际入口为 main.c。
-入口模板仅启动双 PIT，未自动启动电机、舵机、IMU 或串口应用。
+入口已接入分级智能车应用，默认 CAR_STAGE=1，只收 UART3 视觉帧。
+联调级别和参数在 [car_config.h](application/car_config.h)；
+使用步骤见 [首版应用说明](application/car_app.md)。
+二级及以上需要 KEY1 释放事件启动，KEY2 释放事件停止；没有自动起步。
 
 ## 引脚表
 
