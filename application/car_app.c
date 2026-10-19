@@ -5,6 +5,7 @@
 #include "race_control.h"
 #include "uart.h"
 #include "vision.h"
+#include "tuning/car_tuning.h"
 #include <stddef.h>
 
 #if (CAR_ENABLE_MENU == 1U)
@@ -269,7 +270,7 @@ void Car_Update(void)
 
 	if (slope.phase != SLOPE_FLAT)
 	{
-		drive_scale *= CAR_SLOPE_DRIVE_SCALE;
+		drive_scale *= CarTuning_Get(CAR_TUNE_SLOPE_SCALE);
 	}
 #endif
 

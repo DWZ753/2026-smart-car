@@ -40,6 +40,7 @@ typedef enum
 	CAR_MENU_VISION,
 	CAR_MENU_PITCH,
 	CAR_MENU_CONTROL,
+	CAR_MENU_TUNE,
 	CAR_MENU_RAW
 } car_menu_page_e;
 

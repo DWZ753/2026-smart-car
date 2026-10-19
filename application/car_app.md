@@ -46,6 +46,7 @@ bsp/uart、modules/servo、modules/tb6612、modules/imu、modules/key
 - KEY1 / PB18：上一项；KEY2 / PB23：下一项。
 - KEY3 / PB19：确认；KEY4 / PB10：返回并发布停止。
 - Run status → Start → KEY3，申请启动；Stop 项确认或任意页 KEY4 停止。
+- Debug tune 编辑弹窗内 KEY4 只退出编辑，不发布停止；页面级 KEY4 仍停止。
 - 纯导航不产生启停，返回与确认同时出现时停止优先。
 - 一级可完整导航，但启动仅显示 Stage 1: RX only，不启用执行器。
 - 按键沿用低有效、20 ms 扫描和释放事件。
@@ -68,6 +69,9 @@ turn_right = limit(50 * dev + 100 * k, -60, 60)
 
 dev 为 [-1,1]，k 单位 px/row；两个正值都要求右转。
 位置增益 50、方向增益 100、开环 PWM 1000/10000 均为待调起始值。
+这些量在启动时从 [car_config.h](car_config.h) 复制到 RAM 调参表，
+可从 Debug tune 页实时修改，改动在下一个 10 ms 控制周期生效。
+参数不写 Flash，掉电或复位后恢复配置头默认值。
 不启用积分，方向反馈不再求时间微分，也不套用旧灰度 PID 参数。
 大转向时降低 PWM；坡道阶段进一步乘 0.65，不自动提高上坡驱动。
 是否需要上坡补偿留待实车，不用几何参数估算实际速度。
@@ -123,6 +127,10 @@ build_firmware.py 使用本机已有 SDK 2.11、SysConfig 1.26.2 和 tiarmclang 
 当前默认启用 OLED，磁贴、列表、选择器与弹窗说明见 [菜单说明](menu/car_menu.md)。
 主循环优先处理串口和控制，菜单在低优先级位置按脏块刷新。
 CAR_ENABLE_MENU=0 可关闭菜单；此时一级不再注册按键。
+Debug tune 页可调 Drive/Turn/Degraded PWM、KP、KH、转向限幅、
+valid 门限、转向降速阈值和坡道比例；确认参数行进入编辑，
+上下键增减，Restore defaults 恢复默认。
+调参表位于 [application/tuning/car_tuning.c](tuning/car_tuning.c)，仅驻留 RAM。
 
 ## 视觉接收诊断
 

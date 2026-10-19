@@ -1,5 +1,6 @@
 #include "race_control.h"
 #include "car_config.h"
+#include "tuning/car_tuning.h"
 #include <math.h>
 #include <string.h>
 
@@ -26,7 +27,8 @@ static race_state_t race_state;
 static bool Race_Usable(const vision_sample_t *sample_p, uint32_t now_ms)
 {
 	return sample_p->sample_id != 0U && !sample_p->lost &&
-		sample_p->elem != 6U && sample_p->valid >= CAR_VALID_MIN &&
+		sample_p->elem != 6U &&
+		sample_p->valid >= (uint8_t)CarTuning_Get(CAR_TUNE_VALID_MIN) &&
 		(uint32_t)(now_ms - sample_p->received_ms) < CAR_VISION_STOP_MS;
 }
 
@@ -117,7 +119,13 @@ void Race_Update(const vision_sample_t *sample_p, uint32_t now_ms,
 	uint32_t elapsed_ms = now_ms - race_state.last_update_ms;
 	bool fresh = sample_p->sample_id != race_state.last_sample_id;
 	bool usable = Race_Usable(sample_p, now_ms);
-	float target_pwm = CAR_DRIVE_PWM;
+	float target_pwm = CarTuning_Get(CAR_TUNE_DRIVE_PWM);
+	float position_gain = CarTuning_Get(CAR_TUNE_POSITION_GAIN);
+	float heading_gain = CarTuning_Get(CAR_TUNE_HEADING_GAIN);
+	float steering_limit = CarTuning_Get(CAR_TUNE_STEERING_LIMIT);
+	float turn_threshold = CarTuning_Get(CAR_TUNE_TURN_THRESHOLD);
+	float turn_pwm = CarTuning_Get(CAR_TUNE_TURN_PWM);
+	float degraded_pwm = CarTuning_Get(CAR_TUNE_DEGRADED_PWM);
 	float step = 0.0f;
 	float turn = 0.0f;
 
@@ -160,21 +168,20 @@ void Race_Update(const vision_sample_t *sample_p, uint32_t now_ms,
 
 	if (usable)
 	{
-		turn = CAR_POSITION_GAIN * sample_p->dev +
-			CAR_HEADING_GAIN * sample_p->k;
-		output_p->turn_right = fmaxf(-CAR_STEERING_LIMIT,
-			fminf(CAR_STEERING_LIMIT, turn));
+		turn = position_gain * sample_p->dev + heading_gain * sample_p->k;
+		output_p->turn_right = fmaxf(-steering_limit,
+			fminf(steering_limit, turn));
 	}
 
-	if (fabsf(output_p->turn_right) >= CAR_TURN_SLOW_THRESHOLD)
+	if (fabsf(output_p->turn_right) >= turn_threshold)
 	{
-		target_pwm = CAR_TURN_PWM;
+		target_pwm = turn_pwm;
 	}
 
 	if (!usable || (uint32_t)(now_ms - race_state.last_good_ms) >=
 		CAR_VISION_SLOW_MS)
 	{
-		target_pwm = fminf(target_pwm, CAR_DEGRADED_PWM);
+		target_pwm = fminf(target_pwm, degraded_pwm);
 	}
 
 	target_pwm *= fminf(1.0f, drive_scale);

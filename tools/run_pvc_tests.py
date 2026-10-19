@@ -23,6 +23,7 @@ def main():
         "tests/pvc_test.c", "modules/vision/vision.c", "modules/slope/slope.c",
         "application/race/race_control.c",
         "application/chassis/chassis_control.c",
+        "application/tuning/car_tuning.c",
     ]
     stage = 0
     executable = None

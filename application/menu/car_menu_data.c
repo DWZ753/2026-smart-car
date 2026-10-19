@@ -1,13 +1,17 @@
 #include "car_menu_data.h"
 #include "car_config.h"
+#include "tuning/car_tuning.h"
 #include <math.h>
 #include <stdio.h>
+
+#define MENU_PAGE_ROW_CAPACITY 12U
+#define MENU_TUNE_ROWS (1U + (unsigned)CAR_TUNE_COUNT + 1U)
 
 /** 每页第零项为返回入口；仅运行页的 Start/Stop 产生应用命令。 */
 typedef struct
 {
 	uint8_t count;
-	const char *labels[10];
+	const char *labels[MENU_PAGE_ROW_CAPACITY];
 } menu_page_t;
 
 static const menu_page_t menu_pages[] =
@@ -16,8 +20,17 @@ static const menu_page_t menu_pages[] =
 	{10U, {"- Vision", "Dev", "K", "Valid", "Conf", "Lost", "Seq",
 		"Age ms", "Rx", "Bad"}},
 	{5U, {"- IMU pitch", "Pitch", "Base", "Phase", "Ready"}},
-	{6U, {"- Control", "KP", "KH", "PWM", "Limit", "Stage"}}
+	{6U, {"- Control", "KP", "KH", "PWM", "Limit", "Stage"}},
+	{MENU_TUNE_ROWS, {"- Debug tune", "Drive PWM", "Turn PWM",
+		"Degraded PWM", "KP", "KH", "Limit", "Valid min",
+		"Turn thresh", "Slope scale", "Restore defaults"}}
 };
+
+/* 列表页必须从 RUN 连续排列到 RAW 之前，RAW 为独立整屏页面。 */
+_Static_assert(sizeof(menu_pages) / sizeof(menu_pages[0]) ==
+	(size_t)(CAR_MENU_RAW - 1U), "menu_pages must match page enum");
+_Static_assert(MENU_TUNE_ROWS <= MENU_PAGE_ROW_CAPACITY,
+	"tune rows exceed label storage");
 static const char *const race_titles[] =
 {
 	"READY", "DEPART", "RUN", "STOPPING", "DONE", "FAULT"
@@ -153,18 +166,42 @@ void MenuData_Value(car_menu_page_e page, uint8_t row,
 				(model_p->slope.ready ? "YES" : "WAIT"));
 		}
 	}
-	else
+	else if (page == CAR_MENU_CONTROL)
 	{
 		if (row == 1U || row == 2U)
 		{
-			number = row == 1U ? CAR_POSITION_GAIN : CAR_HEADING_GAIN;
+			number = row == 1U ?
+				CarTuning_Get(CAR_TUNE_POSITION_GAIN) :
+				CarTuning_Get(CAR_TUNE_HEADING_GAIN);
 			MenuData_Float(text_p, capacity, number, 10);
 		}
 		else
 		{
-			value = row == 3U ? (uint32_t)CAR_DRIVE_PWM :
-				(row == 4U ? (uint32_t)CAR_STEERING_LIMIT : CAR_STAGE);
+			value = row == 3U ?
+				(uint32_t)CarTuning_Get(CAR_TUNE_DRIVE_PWM) :
+				(row == 4U ?
+				(uint32_t)CarTuning_Get(CAR_TUNE_STEERING_LIMIT) :
+				CAR_STAGE);
 			snprintf(text_p, capacity, "%lu", (unsigned long)value);
+		}
+	}
+	else
+	{
+		/* CAR_MENU_TUNE：最后一行为恢复默认值，不显示数值。 */
+		if (row >= 1U && row <= (uint8_t)CAR_TUNE_COUNT)
+		{
+			car_tune_id_e id = (car_tune_id_e)(row - 1U);
+
+			if (id == CAR_TUNE_SLOPE_SCALE)
+			{
+				MenuData_Float(text_p, capacity,
+					CarTuning_Get(id), 100);
+			}
+			else
+			{
+				snprintf(text_p, capacity, "%ld",
+					(long)roundf(CarTuning_Get(id)));
+			}
 		}
 	}
 }

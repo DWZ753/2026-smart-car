@@ -5,6 +5,7 @@
 #include "vision.h"
 #include "servo.h"
 #include "tb6612.h"
+#include "tuning/car_tuning.h"
 #include <assert.h>
 #include <math.h>
 #include <stdio.h>
@@ -438,6 +439,72 @@ static void Test_Chassis(void)
 #endif
 }
 
+/** @brief 验证调参默认值、步进钳位以及运行时立即生效。 */
+static void Test_Tuning(void)
+{
+	vision_sample_t sample = Test_Sample();
+	uint32_t index = 0U;
+	float turn = 0.0f;
+
+	CarTuning_Reset();
+	assert(fabsf(CarTuning_Get(CAR_TUNE_DRIVE_PWM) - CAR_DRIVE_PWM) <
+		0.00001f);
+	assert(fabsf(CarTuning_Get(CAR_TUNE_TURN_PWM) - CAR_TURN_PWM) <
+		0.00001f);
+	assert(fabsf(CarTuning_Get(CAR_TUNE_DEGRADED_PWM) -
+		CAR_DEGRADED_PWM) < 0.00001f);
+	assert(fabsf(CarTuning_Get(CAR_TUNE_POSITION_GAIN) -
+		CAR_POSITION_GAIN) < 0.00001f);
+	assert(fabsf(CarTuning_Get(CAR_TUNE_HEADING_GAIN) -
+		CAR_HEADING_GAIN) < 0.00001f);
+	assert(fabsf(CarTuning_Get(CAR_TUNE_STEERING_LIMIT) -
+		CAR_STEERING_LIMIT) < 0.00001f);
+	assert((uint8_t)CarTuning_Get(CAR_TUNE_VALID_MIN) == CAR_VALID_MIN);
+	assert(fabsf(CarTuning_Get(CAR_TUNE_TURN_THRESHOLD) -
+		CAR_TURN_SLOW_THRESHOLD) < 0.00001f);
+	assert(fabsf(CarTuning_Get(CAR_TUNE_SLOPE_SCALE) -
+		CAR_SLOPE_DRIVE_SCALE) < 0.00001f);
+
+	/* 连续步进越过上下限时钳位。 */
+	for (index = 0U; index < 200U; index++)
+	{
+		CarTuning_Step(CAR_TUNE_DRIVE_PWM, true);
+	}
+
+	assert(CarTuning_Get(CAR_TUNE_DRIVE_PWM) == 4000.0f);
+
+	for (index = 0U; index < 200U; index++)
+	{
+		CarTuning_Step(CAR_TUNE_DRIVE_PWM, false);
+	}
+
+	assert(CarTuning_Get(CAR_TUNE_DRIVE_PWM) == 0.0f);
+
+	for (index = 0U; index < 200U; index++)
+	{
+		CarTuning_Step(CAR_TUNE_SLOPE_SCALE, false);
+	}
+
+	assert(fabsf(CarTuning_Get(CAR_TUNE_SLOPE_SCALE) - 0.10f) < 0.00001f);
+	CarTuning_Reset();
+
+	/* 运行中修改 KP 后下一次更新即采用新增益。 */
+	sample.dev = 0.2f;
+	sample.k = 0.03f;
+	Race_Init();
+	assert(Race_Start(&sample, 0U));
+	Race_Update(&sample, 10U, 1.0f);
+	turn = Race_GetOutput().turn_right;
+	assert(fabsf(turn - 13.0f) < 0.00001f);
+	CarTuning_Step(CAR_TUNE_POSITION_GAIN, true);
+	Race_Update(&sample, 20U, 1.0f);
+	turn = Race_GetOutput().turn_right;
+	assert(fabsf(turn - 14.0f) < 0.00001f);
+	Race_Stop(false);
+
+	CarTuning_Reset();
+}
+
 int main(void)
 {
 	Test_Vision();
@@ -446,6 +513,7 @@ int main(void)
 	Test_Finish();
 	Test_Slope();
 	Test_Chassis();
+	Test_Tuning();
 	printf("PASS: PVC behavior and output gates, stage %u\n", CAR_STAGE);
 
 	return 0;

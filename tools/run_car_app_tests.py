@@ -18,7 +18,7 @@ def main():
     sources = [
         "tests/car_app_test.c", "application/car_app.c",
         "application/race/race_control.c", "modules/vision/vision.c",
-        "modules/slope/slope.c",
+        "modules/slope/slope.c", "application/tuning/car_tuning.c",
     ]
     compiler = shutil.which("gcc")
     assert compiler is not None, "gcc was not found on PATH"

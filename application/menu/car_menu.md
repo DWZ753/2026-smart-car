@@ -25,20 +25,29 @@
 | KEY4 / PB10 | 关闭弹窗或返回上级，同时发布停止命令 |
 
 任意页返回都可停止。返回与确认同时出现时停止优先，上下同时出现时不移动。
+唯一的例外是 Debug tune 的参数编辑弹窗：此时 KEY4 只退出编辑，不发布停止，
+避免行驶中调参误停车；退出编辑后再按 KEY4 才返回首页并停止。
 列表第一项是页面名称，确认它也可回到首页。
 操作沿用按下后释放事件。默认一级可导航，Start 会提示仅接收，不启动执行器。
 二级以上 Start 仍由应用检查视觉新鲜度、质量，以及四级的 IMU 就绪条件。
-失败时显示原因；确认可关闭提示。参数页仍只读。
+失败时显示原因；确认可关闭提示。Control 页只读，Debug tune 页可实时编辑。
 
 ## 3. 页面与动画
 
-首页五项为 Run status、Vision、IMU pitch、Control、UART raw。
+首页六项为 Run status、Vision、IMU pitch、Control、Debug tune、UART raw。
 二级列表保留各自选中行和视角，超过四行后滚动显示，侧边条表示当前位置。
 
 - 运行列表：Start、Stop、State、PWM、Turn、Link。
 - 视觉列表：Dev、K、Valid、Conf、Lost、Seq、Age ms、Rx、Bad。
 - 坡道列表：相对 Pitch、平地 Base、Phase、Ready。
-- 控制列表：KP、KH、PWM、Limit、Stage。
+- 控制列表：KP、KH、PWM、Limit、Stage；数值反映当前运行时参数。
+- 调参列表：Drive PWM、Turn PWM、Degraded PWM、KP、KH、Limit、
+  Valid min、Turn thresh、Slope scale、Restore defaults。
+
+调参页在参数行按确认打开编辑弹窗，上下键按固定步长增减，确认或返回退出编辑。
+修改直接写入 `application/tuning/car_tuning.c` 的 RAM 参数表，下一个 10 ms
+控制周期即生效，可在行驶中调整；掉电或复位后恢复 `car_config.h` 默认值。
+Restore defaults 一次恢复全部默认值。步长与上下限见该文件的规格表。
 
 镜头、选择框 x/y/宽/高、展开量、标题和侧边条各有时间常数。
 选择框跨页面保持当前形状，目标在磁贴角标与列表反白框之间变化。
@@ -72,6 +81,8 @@ OLED 测试按每笔 I2C 的地址、数据和 ACK 位估算 400 kHz 线时，
 全屏变化的模型线时小于 35 ms；这不是实机帧率或最坏执行时间测量。
 应用测试使用真实 car_app/race/vision/slope，确认导航不误启停、
 启动门控、返回停止、一级禁用执行器及关闭菜单时的原按键行为。
+菜单测试额外覆盖调参步进、编辑态返回不停止和 Restore defaults；
+PVC 测试覆盖默认值与实时生效。
 
 打开 Debug/oled_tests/menu_animation.html 可选择并查看 GIF 动画：
 磁贴前后切换、进入列表、选择、滚动、弹窗、返回与循环。

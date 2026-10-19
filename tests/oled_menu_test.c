@@ -1,8 +1,12 @@
+#include "car_config.h"
 #include "car_menu.h"
+#include "car_menu_data.h"
 #include "i2c.h"
 #include "oled.h"
 #include "oled_canvas.h"
+#include "tuning/car_tuning.h"
 #include <assert.h>
+#include <math.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -365,6 +369,56 @@ static void Test_Menu(void)
 	Menu_KeyEvent(CAR_MENU_KEY_BACK);
 	Test_Settle();
 	Test_Save("menu_selection.bin");
+
+	Menu_KeyEvent(CAR_MENU_KEY_DOWN);
+	Menu_KeyEvent(CAR_MENU_KEY_CONFIRM);
+	assert(Menu_GetStatus().page == CAR_MENU_TUNE);
+	Test_Settle();
+	Test_Save("menu_tune.bin");
+	assert(MenuData_Count(CAR_MENU_TUNE) ==
+		1U + (uint8_t)CAR_TUNE_COUNT + 1U);
+	assert(fabsf(CarTuning_Get(CAR_TUNE_DRIVE_PWM) - CAR_DRIVE_PWM) <
+		0.001f);
+
+	/* 编辑 Drive PWM：确认进入、上下改值、返回退出且不停止。 */
+	Menu_KeyEvent(CAR_MENU_KEY_DOWN);
+	assert(Menu_GetStatus().row == 1U);
+	Menu_KeyEvent(CAR_MENU_KEY_CONFIRM);
+	assert(Menu_GetStatus().popup);
+	Menu_KeyEvent(CAR_MENU_KEY_UP);
+	assert(fabsf(CarTuning_Get(CAR_TUNE_DRIVE_PWM) -
+		(CAR_DRIVE_PWM + 50.0f)) < 0.001f);
+	assert(Menu_GetStatus().row == 1U);
+	Menu_KeyEvent(CAR_MENU_KEY_DOWN);
+	assert(fabsf(CarTuning_Get(CAR_TUNE_DRIVE_PWM) - CAR_DRIVE_PWM) <
+		0.001f);
+	Test_Advance(400U, "tune_edit");
+	assert(Menu_KeyEvent(CAR_MENU_KEY_BACK) == CAR_MENU_ACTION_NONE);
+	assert(!Menu_GetStatus().popup);
+	assert(Menu_GetStatus().page == CAR_MENU_TUNE);
+
+	/* 改值后恢复默认值。 */
+	Menu_KeyEvent(CAR_MENU_KEY_CONFIRM);
+	Menu_KeyEvent(CAR_MENU_KEY_UP);
+	Menu_KeyEvent(CAR_MENU_KEY_CONFIRM);
+	assert(fabsf(CarTuning_Get(CAR_TUNE_DRIVE_PWM) -
+		(CAR_DRIVE_PWM + 50.0f)) < 0.001f);
+
+	for (index = 0U; index < 9U; index++)
+	{
+		Menu_KeyEvent(CAR_MENU_KEY_DOWN);
+	}
+
+	assert(Menu_GetStatus().row == 10U);
+	assert(Menu_GetStatus().scroll_top == 7U);
+	Menu_KeyEvent(CAR_MENU_KEY_CONFIRM);
+	assert(fabsf(CarTuning_Get(CAR_TUNE_DRIVE_PWM) - CAR_DRIVE_PWM) <
+		0.001f);
+	Menu_KeyEvent(CAR_MENU_KEY_CONFIRM);
+	Test_Settle();
+	Test_Save("menu_tune_bottom.bin");
+	assert(Menu_KeyEvent(CAR_MENU_KEY_BACK) == CAR_MENU_ACTION_STOP);
+	assert(Menu_GetStatus().page == CAR_MENU_ROOT);
 
 	Menu_KeyEvent(CAR_MENU_KEY_DOWN);
 	Menu_KeyEvent(CAR_MENU_KEY_CONFIRM);
