@@ -4,6 +4,9 @@
 #include "car_menu.h"
 #include <stddef.h>
 
+/* 调参页第 0 行返回，第 1/2 行启停，其后为连续参数行。 */
+#define MENU_TUNE_FIRST_PARAM_ROW 3U
+
 /** @brief 查询列表项数。 @param page 二级页面。 @retval 行数。 */
 uint8_t MenuData_Count(car_menu_page_e page);
 

@@ -21,7 +21,7 @@
 |---|---|
 | KEY1 / PB18 | 上一项；磁贴页向左 |
 | KEY2 / PB23 | 下一项；磁贴页向右 |
-| KEY3 / PB19 | 进入；在运行页确认 Start/Stop；查看只读数据弹窗 |
+| KEY3 / PB19 | 进入；在运行页或调参页确认 Start/Stop；查看只读数据弹窗 |
 | KEY4 / PB10 | 关闭弹窗或返回上级，同时发布停止命令 |
 
 任意页返回都可停止。返回与确认同时出现时停止优先，上下同时出现时不移动。
@@ -41,11 +41,13 @@
 - 视觉列表：Dev、K、Valid、Conf、Lost、Seq、Age ms、Rx、Bad。
 - 坡道列表：相对 Pitch、平地 Base、Phase、Ready。
 - 控制列表：十四项实时参数，顺序与 Debug tune 相同，最后一项为 Stage。
-- 调参列表：Drive speed、Turn speed、Degr speed、KP、KH、Limit、
+- 调参列表：Start、Stop、Drive speed、Turn speed、Degr speed、KP、KH、Limit、
   Valid min、Turn thresh、Up scale、Crest scale、Down scale、Steer slew、
   Diff start、Diff ratio、Restore defaults。
 
 调参页在参数行按确认打开编辑弹窗，上下键按固定步长增减，确认或返回退出编辑。
+顶部 Start/Stop 按确认直接发布启停请求，页面和参数保持不变，调完无需切回运行页。
+Start 复用原应用的视觉、阶段与 IMU 就绪检查，失败时仍显示原有提示。
 修改直接写入 `application/tuning/car_tuning.c` 的 RAM 参数表，下一个 10 ms
 控制周期即生效，可在行驶中调整；掉电或复位后恢复 `car_config.h` 默认值。
 Restore defaults 一次恢复全部默认值。步长与上下限见该文件的规格表。

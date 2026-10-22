@@ -46,6 +46,7 @@ bsp/uart、modules/servo、modules/motor、modules/imu、modules/key
 - KEY1 / PB18：上一项；KEY2 / PB23：下一项。
 - KEY3 / PB19：确认；KEY4 / PB10：返回并发布停止。
 - Run status → Start → KEY3，申请启动；Stop 项确认或任意页 KEY4 停止。
+- Debug tune 顶部也提供 Start/Stop，同样按 KEY3 申请启停并保持在调参页。
 - Debug tune 编辑弹窗内 KEY4 只退出编辑，不发布停止；页面级 KEY4 仍停止。
 - 纯导航不产生启停，返回与确认同时出现时停止优先。
 - 一级可完整导航，但启动仅显示 Stage 1: RX only，不启用执行器。

@@ -7,6 +7,7 @@
 
 进入 Debug tune，KEY3 编辑，KEY1 增加、KEY2 减少，KEY3 或 KEY4 退出编辑。
 编辑中的 KEY4 只退出，再按一次才发布停车。参数在下个约 10 ms 控制周期生效。
+Debug tune 顶部提供 Start/Stop，选择后按 KEY3 可在本页启停试车，沿用原启动条件。
 Control 按相同顺序显示十四项 RAM 参数和 Stage，使用同一份读取和格式化代码。
 停止和重新起步保留参数；复位、掉电、Restore defaults 恢复编译时默认值。
 

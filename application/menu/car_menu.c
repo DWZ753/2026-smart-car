@@ -8,7 +8,8 @@
 #include <string.h>
 
 #define MENU_ITEMS 6U
-#define MENU_TUNE_RESTORE_ROW (1U + (unsigned)CAR_TUNE_COUNT)
+#define MENU_TUNE_RESTORE_ROW \
+	(MENU_TUNE_FIRST_PARAM_ROW + (unsigned)CAR_TUNE_COUNT)
 #define MENU_TICK_MS 16U
 #define MENU_DATA_MS 100U
 #define MENU_TILE_SPACING 42
@@ -523,7 +524,8 @@ car_menu_action_e Menu_KeyEvent(uint32_t keys)
 		{
 			Menu_Open(CAR_MENU_ROOT);
 		}
-		else if (page == CAR_MENU_RUN && row <= 2U)
+		else if ((page == CAR_MENU_RUN || page == CAR_MENU_TUNE) &&
+			row <= 2U)
 		{
 			return row == 1U ? CAR_MENU_ACTION_START : CAR_MENU_ACTION_STOP;
 		}
@@ -559,7 +561,8 @@ car_menu_action_e Menu_KeyEvent(uint32_t keys)
 	{
 		if (up != down)
 		{
-			CarTuning_Step((car_tune_id_e)(menu_state.popup_row - 1U), up);
+			CarTuning_Step((car_tune_id_e)(menu_state.popup_row -
+				MENU_TUNE_FIRST_PARAM_ROW), up);
 			menu_state.dirty = true;
 		}
 

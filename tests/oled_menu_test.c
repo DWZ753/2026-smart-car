@@ -386,19 +386,31 @@ static void Test_Menu(void)
 	Test_Settle();
 	Test_Save("menu_tune.bin");
 	assert(MenuData_Count(CAR_MENU_TUNE) ==
-		1U + (uint8_t)CAR_TUNE_COUNT + 1U);
+		3U + (uint8_t)CAR_TUNE_COUNT + 1U);
 	assert(fabsf(CarTuning_Get(CAR_TUNE_DRIVE_SPEED) - CAR_DRIVE_SPEED_MM_S) <
 		0.001f);
 
-	/* 编辑 Drive PWM：确认进入、上下改值、返回退出且不停止。 */
+	/* 调参页直接启停，动作不离开页面，也不打开编辑弹窗。 */
 	Menu_KeyEvent(CAR_MENU_KEY_DOWN);
 	assert(Menu_GetStatus().row == 1U);
+	assert(strcmp(MenuData_Label(CAR_MENU_TUNE, 1U), "Start") == 0);
+	assert(Menu_KeyEvent(CAR_MENU_KEY_CONFIRM) == CAR_MENU_ACTION_START);
+	assert(Menu_GetStatus().page == CAR_MENU_TUNE);
+	assert(!Menu_GetStatus().popup);
+	Menu_KeyEvent(CAR_MENU_KEY_DOWN);
+	assert(Menu_KeyEvent(CAR_MENU_KEY_CONFIRM) == CAR_MENU_ACTION_STOP);
+	assert(Menu_GetStatus().page == CAR_MENU_TUNE);
+	assert(!Menu_GetStatus().popup);
+
+	/* 编辑 Drive speed：确认进入、上下改值、返回退出且不停止。 */
+	Menu_KeyEvent(CAR_MENU_KEY_DOWN);
+	assert(Menu_GetStatus().row == 3U);
 	Menu_KeyEvent(CAR_MENU_KEY_CONFIRM);
 	assert(Menu_GetStatus().popup);
 	Menu_KeyEvent(CAR_MENU_KEY_UP);
 	assert(fabsf(CarTuning_Get(CAR_TUNE_DRIVE_SPEED) -
 		(CAR_DRIVE_SPEED_MM_S + 10.0f)) < 0.001f);
-	assert(Menu_GetStatus().row == 1U);
+	assert(Menu_GetStatus().row == 3U);
 	Menu_KeyEvent(CAR_MENU_KEY_DOWN);
 	assert(fabsf(CarTuning_Get(CAR_TUNE_DRIVE_SPEED) - CAR_DRIVE_SPEED_MM_S) <
 		0.001f);
@@ -419,8 +431,8 @@ static void Test_Menu(void)
 		Menu_KeyEvent(CAR_MENU_KEY_DOWN);
 	}
 
-	assert(Menu_GetStatus().row == (uint8_t)CAR_TUNE_COUNT + 1U);
-	assert(Menu_GetStatus().scroll_top == (uint8_t)CAR_TUNE_COUNT - 2U);
+	assert(Menu_GetStatus().row == (uint8_t)CAR_TUNE_COUNT + 3U);
+	assert(Menu_GetStatus().scroll_top == (uint8_t)CAR_TUNE_COUNT);
 	Menu_KeyEvent(CAR_MENU_KEY_CONFIRM);
 	assert(fabsf(CarTuning_Get(CAR_TUNE_DRIVE_SPEED) - CAR_DRIVE_SPEED_MM_S) <
 		0.001f);
@@ -485,6 +497,8 @@ static void Test_ControlSync(void)
 	assert(Menu_GetStatus().page == CAR_MENU_TUNE);
 	Menu_KeyEvent(CAR_MENU_KEY_DOWN);
 	assert(Menu_GetStatus().row == 0U);
+	Menu_KeyEvent(CAR_MENU_KEY_DOWN);
+	Menu_KeyEvent(CAR_MENU_KEY_DOWN);
 
 	for (row = 1U; row <= (uint8_t)CAR_TUNE_COUNT; row++)
 	{
@@ -492,7 +506,7 @@ static void Test_ControlSync(void)
 		Menu_KeyEvent(CAR_MENU_KEY_CONFIRM);
 		Menu_KeyEvent(CAR_MENU_KEY_UP);
 		Menu_KeyEvent(CAR_MENU_KEY_CONFIRM);
-		MenuData_Value(CAR_MENU_TUNE, row, &menu_sim.model, 0U,
+		MenuData_Value(CAR_MENU_TUNE, row + 2U, &menu_sim.model, 0U,
 			edited[row - 1U], sizeof(edited[0]));
 		assert(fabsf(strtof(edited[row - 1U], NULL) -
 			CarTuning_Get((car_tune_id_e)(row - 1U))) < 0.00001f);
@@ -513,7 +527,7 @@ static void Test_ControlSync(void)
 			text, sizeof(text));
 		assert(strcmp(text, edited[row - 1U]) == 0);
 		assert(strcmp(MenuData_Label(CAR_MENU_CONTROL, row),
-			MenuData_Label(CAR_MENU_TUNE, row)) == 0);
+			MenuData_Label(CAR_MENU_TUNE, row + 2U)) == 0);
 		Menu_KeyEvent(CAR_MENU_KEY_DOWN);
 	}
 

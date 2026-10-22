@@ -4,10 +4,12 @@
 #include <math.h>
 #include <stdio.h>
 
-#define MENU_PAGE_ROW_CAPACITY 16U
-#define MENU_TUNE_ROWS (1U + (unsigned)CAR_TUNE_COUNT + 1U)
+#define MENU_PAGE_ROW_CAPACITY 18U
+#define MENU_CONTROL_ROWS (1U + (unsigned)CAR_TUNE_COUNT + 1U)
+#define MENU_TUNE_ROWS \
+	(MENU_TUNE_FIRST_PARAM_ROW + (unsigned)CAR_TUNE_COUNT + 1U)
 
-/** 每页第零项为返回入口；仅运行页的 Start/Stop 产生应用命令。 */
+/** 每页第零项为返回入口；运行页和调参页的 Start/Stop 发布应用意图。 */
 typedef struct
 {
 	uint8_t count;
@@ -21,11 +23,12 @@ static const menu_page_t menu_pages[] =
 	{10U, {"- Vision", "Dev", "K", "Valid", "Conf", "Lost", "Seq",
 		"Age ms", "Rx", "Bad"}},
 	{5U, {"- IMU pitch", "Pitch", "Base", "Phase", "Ready"}},
-	{MENU_TUNE_ROWS, {"- Control", "Drive speed", "Turn speed",
+	{MENU_CONTROL_ROWS, {"- Control", "Drive speed", "Turn speed",
 		"Degr speed", "KP", "KH", "Limit", "Valid min",
 		"Turn thresh", "Up scale", "Crest scale", "Down scale",
 		"Steer slew", "Diff start", "Diff ratio", "Stage"}},
-	{MENU_TUNE_ROWS, {"- Debug tune", "Drive speed", "Turn speed",
+	{MENU_TUNE_ROWS, {"- Debug tune", "Start", "Stop",
+		"Drive speed", "Turn speed",
 		"Degr speed", "KP", "KH", "Limit", "Valid min",
 		"Turn thresh", "Up scale", "Crest scale", "Down scale",
 		"Steer slew", "Diff start", "Diff ratio", "Restore defaults"}}
@@ -84,6 +87,19 @@ void MenuData_Value(car_menu_page_e page, uint8_t row,
 	if (row == 0U)
 	{
 		return;
+	}
+
+	if (page == CAR_MENU_TUNE)
+	{
+		if (row < MENU_TUNE_FIRST_PARAM_ROW)
+		{
+			snprintf(text_p, capacity, ">");
+
+			return;
+		}
+
+		/* 参数显示继续复用 Control 的行号，启停入口不占参数编号。 */
+		row -= MENU_TUNE_FIRST_PARAM_ROW - 1U;
 	}
 
 	if (page == CAR_MENU_RUN)
