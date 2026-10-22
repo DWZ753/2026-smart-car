@@ -12,13 +12,13 @@ def main():
     includes = [
         "tests/mock/car_app", "tests/mock", ".", "application",
         "application/menu", "application/race", "application/chassis",
-        "modules/vision", "modules/slope", "modules/imu", "modules/key",
+        "modules/vision", "modules/slope", "modules/motor", "modules/imu", "modules/key",
         "bsp/uart",
     ]
     sources = [
         "tests/car_app_test.c", "application/car_app.c",
         "application/race/race_control.c", "modules/vision/vision.c",
-        "modules/slope/slope.c",
+        "modules/slope/slope.c", "application/tuning/car_tuning.c",
     ]
     compiler = shutil.which("gcc")
     assert compiler is not None, "gcc was not found on PATH"

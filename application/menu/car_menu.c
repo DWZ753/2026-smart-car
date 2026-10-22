@@ -2,16 +2,22 @@
 #include "car_menu_data.h"
 #include "oled.h"
 #include "oled_canvas.h"
+#include "tuning/car_tuning.h"
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
 
-#define MENU_ITEMS 5U
+#define MENU_ITEMS 6U
+#define MENU_TUNE_RESTORE_ROW (1U + (unsigned)CAR_TUNE_COUNT)
 #define MENU_TICK_MS 16U
 #define MENU_DATA_MS 100U
 #define MENU_TILE_SPACING 42
 #define MENU_ROW_HEIGHT 16
 #define MENU_VISIBLE_ROWS 4U
+
+/* 首页磁贴顺序必须与页枚举一致：RUN .. TUNE、RAW。 */
+_Static_assert(MENU_ITEMS == (unsigned)CAR_MENU_RAW,
+	"root tiles must match page enum");
 
 /** 镜头、选择框和前景分别运动；各页保留选中行及滚动位置。 */
 typedef struct
@@ -35,6 +41,7 @@ typedef struct
 	float popup_y;
 	char message[21];
 	bool popup;
+	bool tune_edit;
 	bool dirty;
 	bool animating;
 	uint8_t raw[VISION_RAW_BYTES];
@@ -45,7 +52,7 @@ typedef struct
 static menu_state_t menu_state;
 static const char *const menu_titles[MENU_ITEMS] =
 {
-	"Run status", "Vision", "IMU pitch", "Control", "UART raw"
+	"Run status", "Vision", "IMU pitch", "Control", "Debug tune", "UART raw"
 };
 
 /** @brief 按毫秒趋近目标，独立于 I2C 刷新调用次数。
@@ -81,6 +88,7 @@ static void Menu_Open(car_menu_page_e page)
 	menu_state.unfold = 0.0f;
 	menu_state.label_y = 64.0f;
 	menu_state.popup = false;
+	menu_state.tune_edit = false;
 	menu_state.message[0] = '\0';
 	menu_state.dirty = true;
 }
@@ -198,6 +206,15 @@ static void Menu_Icon(int16_t x, int16_t y, uint8_t index)
 				x + 7 + slider * 8, y + 26, false);
 			Canvas_Box(x + 5 + slider * 8, y + knob_y, 5, 5, false);
 		}
+	}
+	else if (index == 4U)
+	{
+		/* 仪表盘：调参页使用可读的指针图标，与只读控制页区分。 */
+		Canvas_Line(x + 6, y + 22, x + 11, y + 9, false);
+		Canvas_Line(x + 24, y + 22, x + 19, y + 9, false);
+		Canvas_Line(x + 11, y + 9, x + 19, y + 9, false);
+		Canvas_Line(x + 15, y + 18, x + 21, y + 9, false);
+		Canvas_Box(x + 13, y + 16, 4, 4, true);
 	}
 	else
 	{
@@ -331,6 +348,11 @@ static void Menu_Popup(const car_menu_model_t *model_p, uint32_t now_ms)
 	Canvas_RoundFrame(4, y, 120, 30);
 	Canvas_Text(10, y + 5, label_p);
 	Canvas_Text(10, y + 17, text);
+
+	if (menu_state.tune_edit)
+	{
+		Canvas_Text(95, y + 17, "EDIT");
+	}
 }
 
 /** @brief 诊断页限制显示位数，内部累计值保持不变。
@@ -452,6 +474,16 @@ car_menu_action_e Menu_KeyEvent(uint32_t keys)
 
 	if ((keys & CAR_MENU_KEY_BACK) != 0U)
 	{
+		/* 调参编辑中的返回键只退出编辑，不发布停止。 */
+		if (menu_state.tune_edit)
+		{
+			menu_state.tune_edit = false;
+			menu_state.popup = false;
+			menu_state.dirty = true;
+
+			return CAR_MENU_ACTION_NONE;
+		}
+
 		if (menu_state.popup)
 		{
 			menu_state.popup = false;
@@ -470,7 +502,12 @@ car_menu_action_e Menu_KeyEvent(uint32_t keys)
 	{
 		menu_state.dirty = true;
 
-		if (menu_state.popup)
+		if (menu_state.tune_edit)
+		{
+			menu_state.tune_edit = false;
+			menu_state.popup = false;
+		}
+		else if (menu_state.popup)
 		{
 			menu_state.popup = false;
 		}
@@ -490,12 +527,40 @@ car_menu_action_e Menu_KeyEvent(uint32_t keys)
 		{
 			return row == 1U ? CAR_MENU_ACTION_START : CAR_MENU_ACTION_STOP;
 		}
+		else if (page == CAR_MENU_TUNE)
+		{
+			if (row >= (uint8_t)MENU_TUNE_RESTORE_ROW)
+			{
+				CarTuning_Reset();
+				Menu_ShowMessage("Defaults restored");
+			}
+			else
+			{
+				menu_state.message[0] = '\0';
+				menu_state.popup_page = page;
+				menu_state.popup_row = row;
+				menu_state.popup = true;
+				menu_state.tune_edit = true;
+			}
+		}
 		else
 		{
 			menu_state.message[0] = '\0';
 			menu_state.popup_page = page;
 			menu_state.popup_row = row;
 			menu_state.popup = true;
+		}
+
+		return CAR_MENU_ACTION_NONE;
+	}
+
+	/* 编辑弹窗打开时，上下键改值而不是移动选择行。 */
+	if (menu_state.popup && menu_state.tune_edit)
+	{
+		if (up != down)
+		{
+			CarTuning_Step((car_tune_id_e)(menu_state.popup_row - 1U), up);
+			menu_state.dirty = true;
 		}
 
 		return CAR_MENU_ACTION_NONE;
@@ -540,6 +605,7 @@ void Menu_ShowMessage(const char *message_p)
 {
 	snprintf(menu_state.message, sizeof(menu_state.message), "%s", message_p);
 	menu_state.popup = true;
+	menu_state.tune_edit = false;
 	menu_state.dirty = true;
 }
 

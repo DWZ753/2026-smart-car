@@ -83,5 +83,8 @@ python tools\run_software_tests.py
 默认 CAR_ENABLE_MENU=1，一至四级均可查看菜单；
 KEY1/KEY2/KEY3/KEY4 分别为上、下、确认、返回；返回同时发布停止。
 首页为磁贴，二级为可滚动列表；确认只读数据可查看弹窗，控制配置只读。
+首页 Debug tune 可在行驶中调节速度、转向增益和门限等参数；
+参数仅保存在 RAM，掉电恢复 [car_config.h](application/car_config.h) 默认值。
+编辑弹窗内按返回只退出编辑，不发布停止；页面级返回仍停止。
 动画预览：Debug/oled_tests/menu_animation.html。
 移植范围、刷新策略与验证步骤见 [菜单说明](application/menu/car_menu.md)。

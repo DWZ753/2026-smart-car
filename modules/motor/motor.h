@@ -7,9 +7,14 @@
 #define __MOTOR_H__
 
 #include <stdint.h>
-#include "tb6612.h"
+/* 正值速度对应的电机电气方向；左右轮镜像安装。 */
+#define MOTOR_LEFT_DIRECTION 1
+#define MOTOR_RIGHT_DIRECTION (-1)
 
-#define MOTOR_MAX_PWM_DUTY (TB6612_PWM_PERIOD_COUNT - 1)
+#if ((MOTOR_LEFT_DIRECTION != 1) && (MOTOR_LEFT_DIRECTION != -1)) || \
+	((MOTOR_RIGHT_DIRECTION != 1) && (MOTOR_RIGHT_DIRECTION != -1))
+#error "Motor directions must be 1 or -1"
+#endif
 
 // 电机最高转速 RPM（实测）
 #define MOTOR_MAX_RPM 300.0f

@@ -46,18 +46,21 @@
 #define CAR_POSITION_GAIN 50.0f
 #define CAR_HEADING_GAIN 100.0f
 #define CAR_STEERING_LIMIT 60.0f
+/* 转向控制单位/秒，0 关闭变化率限制。 */
+#define CAR_STEERING_SLEW_PER_S 800.0f
 #define CAR_SERVO_CENTER 0
-#define CAR_SERVO_DIRECTION (-1)
+#define CAR_SERVO_DIRECTION 1
 
-/* PWM 计数，不是实际 mm/s；TB6612 周期为 10000。 */
-#define CAR_DRIVE_PWM 1000.0f
-#define CAR_TURN_PWM 700.0f
-#define CAR_DEGRADED_PWM 300.0f
+/* 开环速度命令，单位 mm/s，由 motor 模块负责换算。 */
+#define CAR_DRIVE_SPEED_MM_S 1200.0f
+#define CAR_TURN_SPEED_MM_S 800.0f
+#define CAR_DEGRADED_SPEED_MM_S 300.0f
 #define CAR_TURN_SLOW_THRESHOLD 30.0f
-#define CAR_ACCEL_PWM_PER_S 2000.0f
-#define CAR_DECEL_PWM_PER_S 10000.0f
-#define CAR_LEFT_DIRECTION 1
-#define CAR_RIGHT_DIRECTION (-1)
+/* 差速跟随逻辑转向，在 Limit 处达到最大比例。 */
+#define CAR_DIFF_THRESHOLD 25.0f
+#define CAR_DIFF_MAX_RATIO 0.20f
+#define CAR_ACCEL_MM_S2 427.0f
+#define CAR_DECEL_MM_S2 2136.0f
 
 /* 相对 pitch 的正值定义为抬头，安装相反时改为 -1。 */
 #define CAR_PITCH_DIRECTION (-1.0f)
@@ -67,15 +70,13 @@
 #define CAR_PITCH_EXIT_DEG 3.0f
 #define CAR_PITCH_CONFIRM_MS 100U
 #define CAR_PITCH_FILTER_GAIN 0.2f
-#define CAR_SLOPE_DRIVE_SCALE 0.65f
+/* 分别缩放上坡、坡顶和下坡目标；上坡允许大于 1 以增加驱动。 */
+#define CAR_UPHILL_SPEED_SCALE 1.25f
+#define CAR_CREST_SPEED_SCALE 0.80f
+#define CAR_DOWNHILL_SPEED_SCALE 0.65f
 
 #if (CAR_SERVO_DIRECTION != 1) && (CAR_SERVO_DIRECTION != -1)
 #error "CAR_SERVO_DIRECTION must be 1 or -1"
-#endif
-
-#if ((CAR_LEFT_DIRECTION != 1) && (CAR_LEFT_DIRECTION != -1)) || \
-	((CAR_RIGHT_DIRECTION != 1) && (CAR_RIGHT_DIRECTION != -1))
-#error "Motor directions must be 1 or -1"
 #endif
 
 #endif

@@ -131,13 +131,13 @@ def main():
 
     includes = [
         "tests/mock", "application", "application/menu", "application/race",
-        "modules/vision", "modules/slope", "modules/oled", "bsp/i2c",
+        "modules/vision", "modules/slope", "modules/motor", "modules/oled", "bsp/i2c",
         "bsp/delay",
     ]
     sources = [
         "tests/oled_menu_test.c", "modules/oled/oled.c",
         "modules/oled/oled_canvas.c", "application/menu/car_menu.c",
-        "application/menu/car_menu_data.c",
+        "application/menu/car_menu_data.c", "application/tuning/car_tuning.c",
     ]
     executable = build / "oled_menu_test.exe"
     command = [

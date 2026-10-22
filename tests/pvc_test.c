@@ -4,7 +4,8 @@
 #include "slope.h"
 #include "vision.h"
 #include "servo.h"
-#include "tb6612.h"
+#include "motor.h"
+#include "tuning/car_tuning.h"
 #include <assert.h>
 #include <math.h>
 #include <stdio.h>
@@ -17,8 +18,8 @@ typedef struct
 	uint32_t motor_calls;
 	uint32_t brakes;
 	int32_t servo;
-	int32_t left_pwm;
-	int32_t right_pwm;
+	float left_speed;
+	float right_speed;
 } actuator_mock_t;
 
 static actuator_mock_t actuator;
@@ -33,52 +34,21 @@ void Servo_SetValue(int32_t value)
 	actuator.servo = value;
 }
 
-void TB6612_Init(void)
+void Motor_Init(void)
 {
 	actuator.motor_calls++;
 }
 
-void TB6612_A_Stop(void)
+void Motor_Brake(void)
 {
-	actuator.motor_calls++;
+	actuator.brakes += 2U;
 }
 
-void TB6612_B_Stop(void)
+void Motor_SetSpeedLR(float left_mm_s, float right_mm_s)
 {
 	actuator.motor_calls++;
-}
-
-void TB6612_A_Brake(void)
-{
-	actuator.brakes++;
-}
-
-void TB6612_B_Brake(void)
-{
-	actuator.brakes++;
-}
-void TB6612_A_Forward(uint32_t duty)
-{
-	actuator.motor_calls++;
-	actuator.left_pwm = (int32_t)duty;
-}
-
-void TB6612_A_Backward(uint32_t duty)
-{
-	actuator.motor_calls++;
-	actuator.left_pwm = -(int32_t)duty;
-}
-
-void TB6612_B_Forward(uint32_t duty)
-{
-	actuator.motor_calls++;
-	actuator.right_pwm = (int32_t)duty;
-}
-
-void TB6612_B_Backward(uint32_t duty)
-{
-	actuator.motor_calls++;
-	actuator.right_pwm = -(int32_t)duty;
+	actuator.left_speed = left_mm_s;
+	actuator.right_speed = right_mm_s;
 }
 
 /** @brief 重算人为构造帧的校验。 @param frame_p 完整帧。 @retval 无。 */
@@ -283,12 +253,14 @@ static void Test_RaceFault(void)
 	sample.k = 0.03f;
 	sample.conf = 0U;
 	Race_Update(&sample, 0U, 1.0f);
-	assert(Race_GetOutput().drive_pwm == 0.0f);
+	assert(Race_GetOutput().drive_speed_mm_s == 0.0f);
 	Race_Update(&sample, 10U, 1.0f);
 	output = Race_GetOutput();
 	assert(output.enabled);
-	assert(fabsf(output.turn_right - 13.0f) < 0.00001f);
-	assert(output.drive_pwm > 0.0f);
+	assert(fabsf(output.turn_target - 13.0f) < 0.00001f);
+	assert(fabsf(output.turn_right -
+		fminf(13.0f, CAR_STEERING_SLEW_PER_S * 0.01f)) < 0.00001f);
+	assert(output.drive_speed_mm_s > 0.0f);
 
 	sample.sample_id++;
 	sample.received_ms = 20U;
@@ -332,6 +304,7 @@ static void Test_Finish(void)
 {
 	vision_sample_t sample = Test_Sample();
 	uint32_t now_ms = 0U;
+	uint32_t deadline_ms = 0U;
 
 	Race_Init();
 	sample.elem = 5U;
@@ -363,7 +336,13 @@ static void Test_Finish(void)
 	Race_Update(&sample, now_ms + 20U, 1.0f);
 	assert(Race_GetOutput().phase == RACE_RUN);
 
-	for (now_ms += 30U; now_ms <= CAR_START_GUARD_MS + 250U;
+	/* 留出新帧确认和当前输出减至零的时间，适配不同 PWM 默认值。 */
+	deadline_ms = now_ms + 30U +
+		CAR_FINISH_CONFIRM_FRAMES * CAR_CONTROL_PERIOD_MS +
+		(uint32_t)ceilf(Race_GetOutput().drive_speed_mm_s * 1000.0f /
+			CAR_DECEL_MM_S2) + CAR_CONTROL_PERIOD_MS;
+
+	for (now_ms += 30U; now_ms <= deadline_ms;
 		now_ms += 10U)
 	{
 		sample.sample_id++;
@@ -372,7 +351,9 @@ static void Test_Finish(void)
 	}
 
 	assert(Race_GetOutput().phase == RACE_DONE);
-	assert(Race_GetOutput().drive_pwm == 0.0f);
+	assert(Race_GetOutput().drive_speed_mm_s == 0.0f);
+	assert(Race_GetOutput().turn_right == 0.0f);
+	assert(Race_GetOutput().turn_target == 0.0f);
 	assert(!Race_GetOutput().enabled);
 }
 
@@ -409,12 +390,25 @@ static void Test_Slope(void)
 /** @brief 验证四级输出裁剪和统一停止门控。 */
 static void Test_Chassis(void)
 {
-	race_output_t output = {RACE_RUN, 20.0f, 500.0f, true};
+	race_output_t output =
+	{
+		.phase = RACE_RUN,
+		.turn_right = 20.0f,
+		.drive_speed_mm_s = 500.0f,
+		.enabled = true,
+		.turn_target = 60.0f
+	};
 	uint32_t previous_calls = 0U;
 
 	memset(&actuator, 0, sizeof(actuator));
 	Chassis_Init();
 	Chassis_Apply(&output);
+
+#if (CAR_STAGE >= CAR_STAGE_STEERING)
+	/* 底盘使用平滑输出，不能误用未完成跟随的目标。 */
+	assert(actuator.servo == CAR_SERVO_CENTER + 20 * CAR_SERVO_DIRECTION);
+#endif
+
 	previous_calls = actuator.motor_calls;
 	output.enabled = false;
 	Chassis_Apply(&output);
@@ -429,8 +423,8 @@ static void Test_Chassis(void)
 #if (CAR_STAGE >= CAR_STAGE_DRIVE)
 	assert(previous_calls > 0U);
 	assert(actuator.motor_calls == previous_calls);
-	assert(actuator.left_pwm == 500 * CAR_LEFT_DIRECTION);
-	assert(actuator.right_pwm == 500 * CAR_RIGHT_DIRECTION);
+	assert(actuator.left_speed == 500.0f);
+	assert(actuator.right_speed == 500.0f);
 	assert(actuator.brakes == 2U);
 #else
 	assert(previous_calls == 0U);
@@ -438,14 +432,509 @@ static void Test_Chassis(void)
 #endif
 }
 
+/** @brief 调低直道目标不能在转弯时加速，短时丢线也遵守新转向限幅。 */
+static void Test_TuningOutputLimits(void)
+{
+	vision_sample_t sample = Test_Sample();
+	uint32_t index = 0U;
+	uint32_t now_ms = 0U;
+	float previous_speed = 0.0f;
+
+	CarTuning_Reset();
+	sample.dev = 1.0f;
+	Race_Init();
+	assert(Race_Start(&sample, now_ms));
+
+	for (now_ms = 10U; now_ms <= 2000U; now_ms += 10U)
+	{
+		sample.sample_id++;
+		sample.received_ms = now_ms;
+		Race_Update(&sample, now_ms, 1.0f);
+	}
+
+	assert(Race_GetOutput().turn_right > 0.0f);
+	previous_speed = Race_GetOutput().drive_speed_mm_s;
+
+	for (index = 0U; index < 512U; index++)
+	{
+		CarTuning_Step(CAR_TUNE_DRIVE_SPEED, false);
+		CarTuning_Step(CAR_TUNE_STEERING_LIMIT, false);
+	}
+
+	/* 观测暂时不可用时仍立即应用新的转向限幅。 */
+	sample.sample_id++;
+	sample.received_ms = now_ms;
+	sample.lost = true;
+	Race_Update(&sample, now_ms, 1.0f);
+	assert(Race_GetOutput().turn_right == 0.0f);
+
+	/* 恢复转向输出并令阈值为零，检验 Drive=0 也不能被转弯档覆盖。 */
+	for (index = 0U; index < 512U; index++)
+	{
+		CarTuning_Step(CAR_TUNE_STEERING_LIMIT, true);
+		CarTuning_Step(CAR_TUNE_TURN_THRESHOLD, false);
+	}
+
+	sample.lost = false;
+
+	for (; now_ms <= 2500U; now_ms += 10U)
+	{
+		sample.sample_id++;
+		sample.received_ms = now_ms;
+		Race_Update(&sample, now_ms, 1.0f);
+		assert(Race_GetOutput().drive_speed_mm_s <= previous_speed);
+		previous_speed = Race_GetOutput().drive_speed_mm_s;
+	}
+
+	assert(Race_GetOutput().drive_speed_mm_s == 0.0f);
+	Race_Stop(false);
+	CarTuning_Reset();
+}
+
+/** @brief 在现有步长内设置测试参数。 */
+static void Test_TuneValue(car_tune_id_e id, float value)
+{
+	uint32_t index = 0U;
+
+	for (index = 0U; index < 200U &&
+		fabsf(CarTuning_Get(id) - value) > 0.00001f; index++)
+	{
+		CarTuning_Step(id, CarTuning_Get(id) < value);
+	}
+
+	assert(fabsf(CarTuning_Get(id) - value) < 0.00001f);
+}
+
+/** @brief 用新观测推进真实控制器。 */
+static void Test_ControlStep(vision_sample_t *sample_p, uint32_t now_ms)
+{
+	sample_p->sample_id++;
+	sample_p->received_ms = now_ms;
+	Race_Update(sample_p, now_ms, 1.0f);
+}
+
+#if (CAR_STAGE >= CAR_STAGE_DRIVE)
+/** @brief 差速跟随平滑转向，连续介入且不突破电机速度及停止门控。 */
+static void Test_Differential(void)
+{
+	race_output_t output =
+	{
+		.phase = RACE_RUN,
+		.enabled = true,
+		.drive_speed_mm_s = 800.0f,
+		.turn_right = 20.0f,
+		.turn_target = -60.0f
+	};
+	vision_sample_t sample = Test_Sample();
+	uint32_t now_ms = 0U;
+	uint32_t previous_calls = 0U;
+	float previous_diff = 0.0f;
+
+	CarTuning_Reset();
+	Chassis_Apply(&output);
+	assert(actuator.left_speed == 800.0f);
+	assert(actuator.right_speed == 800.0f);
+	output.turn_right = CAR_DIFF_THRESHOLD;
+	Chassis_Apply(&output);
+	assert(actuator.left_speed == actuator.right_speed);
+	output.turn_right += 0.01f;
+	Chassis_Apply(&output);
+	assert(actuator.left_speed > actuator.right_speed);
+	assert(actuator.left_speed - actuator.right_speed < 1.0f);
+	output.turn_right = 42.5f;
+	Chassis_Apply(&output);
+	assert(fabsf(actuator.left_speed - 880.0f) < 0.01f);
+	assert(fabsf(actuator.right_speed - 720.0f) < 0.01f);
+	output.turn_right = 60.0f;
+	Chassis_Apply(&output);
+	assert(fabsf(actuator.left_speed - 960.0f) < 0.01f);
+	assert(fabsf(actuator.right_speed - 640.0f) < 0.01f);
+	output.turn_right = -60.0f;
+	Chassis_Apply(&output);
+	assert(fabsf(actuator.left_speed - 640.0f) < 0.01f);
+	assert(fabsf(actuator.right_speed - 960.0f) < 0.01f);
+	Test_TuneValue(CAR_TUNE_DIFF_MAX_RATIO, 0.30f);
+	Chassis_Apply(&output);
+	assert(fabsf(actuator.left_speed - 560.0f) < 0.01f);
+	assert(fabsf(actuator.right_speed - 1040.0f) < 0.01f);
+	output.drive_speed_mm_s = MOTOR_MAX_SPEED_MM_S;
+	Chassis_Apply(&output);
+	assert(actuator.right_speed <= MOTOR_MAX_SPEED_MM_S);
+	assert(fabsf(actuator.left_speed / actuator.right_speed -
+		0.70f / 1.30f) < 0.00001f);
+	output.drive_speed_mm_s = 10.0f;
+	Chassis_Apply(&output);
+	assert(actuator.left_speed > 0.0f && actuator.right_speed > 0.0f);
+	Test_TuneValue(CAR_TUNE_DIFF_MAX_RATIO, 0.0f);
+	Chassis_Apply(&output);
+	assert(actuator.left_speed == actuator.right_speed);
+	Test_TuneValue(CAR_TUNE_DIFF_MAX_RATIO, 0.50f);
+	Test_TuneValue(CAR_TUNE_DIFF_THRESHOLD, 60.0f);
+	Chassis_Apply(&output);
+	assert(actuator.left_speed == actuator.right_speed);
+	Test_TuneValue(CAR_TUNE_STEERING_LIMIT, 0.0f);
+	Test_TuneValue(CAR_TUNE_DIFF_THRESHOLD, 0.0f);
+	Chassis_Apply(&output);
+	assert(actuator.left_speed == actuator.right_speed);
+	previous_calls = actuator.motor_calls;
+	output.drive_speed_mm_s = 0.0f;
+	Chassis_Apply(&output);
+	output.drive_speed_mm_s = NAN;
+	Chassis_Apply(&output);
+	output.drive_speed_mm_s = INFINITY;
+	Chassis_Apply(&output);
+	output.enabled = false;
+	output.drive_speed_mm_s = 800.0f;
+	Chassis_Apply(&output);
+	assert(actuator.motor_calls == previous_calls);
+
+	/* 急弯反号时跟随输出方向，丢线后保持比例并随降速减小差速量。 */
+	CarTuning_Reset();
+	Race_Init();
+	sample.dev = 1.0f;
+	sample.k = 0.10f;
+	assert(Race_Start(&sample, 0U));
+
+	for (now_ms = 10U; now_ms <= 2000U; now_ms += 10U)
+	{
+		Test_ControlStep(&sample, now_ms);
+	}
+
+	sample.dev = -1.0f;
+	sample.k = -0.10f;
+	Test_ControlStep(&sample, now_ms);
+	output = Race_GetOutput();
+	assert(output.turn_target < 0.0f && output.turn_right > 0.0f);
+	Chassis_Apply(&output);
+	assert(actuator.left_speed > actuator.right_speed);
+	previous_diff = actuator.left_speed - actuator.right_speed;
+	sample.lost = true;
+	now_ms += 10U;
+	Test_ControlStep(&sample, now_ms);
+	output = Race_GetOutput();
+	Chassis_Apply(&output);
+	assert(actuator.left_speed > actuator.right_speed);
+	assert(actuator.left_speed - actuator.right_speed < previous_diff);
+	previous_calls = actuator.motor_calls;
+	Test_ControlStep(&sample, now_ms + CAR_VISION_STOP_MS - 10U);
+	output = Race_GetOutput();
+	assert(!output.enabled);
+	Chassis_Apply(&output);
+	assert(actuator.motor_calls == previous_calls);
+	CarTuning_Reset();
+}
+#endif
+
+/** @brief 验证双向阶跃、真实 dt、丢线、限幅及停止重启。 */
+static void Test_SteeringSlew(void)
+{
+	vision_sample_t sample = Test_Sample();
+	uint32_t now_ms = 0U;
+	float previous = 0.0f;
+
+	CarTuning_Reset();
+	assert(CarTuning_Get(CAR_TUNE_STEERING_SLEW) ==
+		CAR_STEERING_SLEW_PER_S);
+	Test_TuneValue(CAR_TUNE_STEERING_SLEW, 800.0f);
+	sample.dev = 1.0f;
+	sample.k = 0.1f;
+	Race_Init();
+	assert(Race_Start(&sample, 0U));
+	Race_Update(&sample, 0U, 1.0f);
+	assert(Race_GetOutput().turn_target == 60.0f);
+	assert(Race_GetOutput().turn_right == 0.0f);
+
+	for (now_ms = 10U; now_ms <= 80U; now_ms += 10U)
+	{
+		Test_ControlStep(&sample, now_ms);
+		assert(Race_GetOutput().turn_right <= previous + 8.0f);
+		assert(Race_GetOutput().turn_right <= 60.0f);
+		previous = Race_GetOutput().turn_right;
+	}
+
+	assert(previous == 60.0f);
+	sample.dev = -1.0f;
+	sample.k = -0.1f;
+
+	for (; now_ms <= 230U; now_ms += 10U)
+	{
+		Test_ControlStep(&sample, now_ms);
+		assert(Race_GetOutput().turn_target == -60.0f);
+		assert(Race_GetOutput().turn_right >= previous - 8.0f);
+		previous = Race_GetOutput().turn_right;
+	}
+
+	assert(previous == -60.0f);
+
+	/* 手动停止清零；新启动不能继承上一次 -60 的状态。 */
+	Race_Stop(false);
+	assert(Race_GetOutput().turn_right == 0.0f);
+	assert(Race_GetOutput().turn_target == 0.0f);
+	sample.received_ms = 240U;
+	assert(Race_Start(&sample, 240U));
+	sample.dev = 1.0f;
+	sample.k = 0.1f;
+	Test_ControlStep(&sample, 250U);
+	assert(Race_GetOutput().turn_right == 8.0f);
+	Test_ControlStep(&sample, 255U);
+	assert(Race_GetOutput().turn_right == 12.0f);
+	Test_ControlStep(&sample, 255U);
+	assert(Race_GetOutput().turn_right == 12.0f);
+
+	/* 调大变化率立即生效；偶发 30 ms 卡顿最多按 20 ms 推进。 */
+	Test_TuneValue(CAR_TUNE_STEERING_SLEW, 1000.0f);
+	Test_ControlStep(&sample, 265U);
+	assert(Race_GetOutput().turn_right == 22.0f);
+	Test_ControlStep(&sample, 295U);
+	assert(Race_GetOutput().turn_right == 42.0f);
+
+	/* 显式丢线及观测变旧时冻结当前输出，不能继续追赶旧目标。 */
+	sample.lost = true;
+	Test_ControlStep(&sample, 305U);
+	assert(Race_GetOutput().turn_right == 42.0f);
+	assert(Race_GetOutput().turn_target == 42.0f);
+	Test_TuneValue(CAR_TUNE_STEERING_LIMIT, 20.0f);
+	Race_Update(&sample, 315U, 1.0f);
+	assert(Race_GetOutput().turn_right == 20.0f);
+	assert(Race_GetOutput().turn_target == 20.0f);
+	sample.lost = false;
+	Test_TuneValue(CAR_TUNE_STEERING_LIMIT, 60.0f);
+	Test_ControlStep(&sample, 325U);
+	assert(Race_GetOutput().turn_right == 30.0f);
+	Race_Update(&sample, 375U, 1.0f);
+	assert(Race_GetOutput().turn_right == 30.0f);
+	Race_Update(&sample, 425U, 1.0f);
+	assert(Race_GetOutput().phase == RACE_FAULT);
+	assert(Race_GetOutput().turn_right == 0.0f);
+	assert(Race_GetOutput().turn_target == 0.0f);
+
+	/* 设为 0 恢复直通；上下界与恢复默认均可通过调参入口验证。 */
+	sample.received_ms = 435U;
+	assert(Race_Start(&sample, 435U));
+	Test_TuneValue(CAR_TUNE_STEERING_SLEW, 0.0f);
+	Test_ControlStep(&sample, 445U);
+	assert(Race_GetOutput().turn_right == 60.0f);
+	CarTuning_Step(CAR_TUNE_STEERING_SLEW, false);
+	assert(CarTuning_Get(CAR_TUNE_STEERING_SLEW) == 0.0f);
+	Test_TuneValue(CAR_TUNE_STEERING_SLEW, 3000.0f);
+	CarTuning_Step(CAR_TUNE_STEERING_SLEW, true);
+	assert(CarTuning_Get(CAR_TUNE_STEERING_SLEW) == 3000.0f);
+	Race_Stop(false);
+	CarTuning_Reset();
+}
+
+/** @brief 目标提前触发降速，回正期间也不能过早恢复直道速度。 */
+static void Test_SteeringSpeed(void)
+{
+	vision_sample_t sample = Test_Sample();
+	uint32_t now_ms = 0U;
+	float previous_speed = 0.0f;
+
+	CarTuning_Reset();
+	Test_TuneValue(CAR_TUNE_STEERING_SLEW, 800.0f);
+	Test_TuneValue(CAR_TUNE_DRIVE_SPEED, 600.0f);
+	Test_TuneValue(CAR_TUNE_TURN_SPEED, 400.0f);
+	Race_Init();
+	assert(Race_Start(&sample, 0U));
+
+	for (now_ms = 10U; now_ms <= 1600U; now_ms += 10U)
+	{
+		Test_ControlStep(&sample, now_ms);
+	}
+
+	previous_speed = Race_GetOutput().drive_speed_mm_s;
+	sample.dev = 1.0f;
+	sample.k = 0.1f;
+	Test_ControlStep(&sample, now_ms);
+	assert(Race_GetOutput().turn_right == 8.0f);
+	assert(Race_GetOutput().turn_target == 60.0f);
+	assert(Race_GetOutput().drive_speed_mm_s < previous_speed);
+
+	for (now_ms += 10U; now_ms <= 1800U; now_ms += 10U)
+	{
+		Test_ControlStep(&sample, now_ms);
+	}
+
+	previous_speed = Race_GetOutput().drive_speed_mm_s;
+	sample.dev = 0.0f;
+	sample.k = 0.0f;
+	Test_ControlStep(&sample, now_ms);
+	assert(Race_GetOutput().turn_target == 0.0f);
+	assert(Race_GetOutput().turn_right == 52.0f);
+	assert(Race_GetOutput().drive_speed_mm_s <= previous_speed);
+	Race_Stop(false);
+	CarTuning_Reset();
+}
+
+/** @brief 上坡比例可放大目标，但不能突破速度及视觉降级上限。 */
+static void Test_SlopeDriveLimits(void)
+{
+	vision_sample_t sample = Test_Sample();
+	uint32_t now_ms = 0U;
+
+	CarTuning_Reset();
+	Test_TuneValue(CAR_TUNE_DRIVE_SPEED, 1000.0f);
+	Race_Init();
+	assert(Race_Start(&sample, 0U));
+
+	for (now_ms = 10U; now_ms <= 4000U; now_ms += 10U)
+	{
+		sample.sample_id++;
+		sample.received_ms = now_ms;
+		Race_Update(&sample, now_ms, 1.25f);
+	}
+
+	assert(fabsf(Race_GetOutput().drive_speed_mm_s - 1250.0f) < 0.01f);
+	Test_TuneValue(CAR_TUNE_DRIVE_SPEED, MOTOR_MAX_SPEED_MM_S);
+
+	for (; now_ms <= 7000U; now_ms += 10U)
+	{
+		sample.sample_id++;
+		sample.received_ms = now_ms;
+		Race_Update(&sample, now_ms, 2.0f);
+		assert(Race_GetOutput().drive_speed_mm_s <= MOTOR_MAX_SPEED_MM_S);
+	}
+
+	assert(Race_GetOutput().drive_speed_mm_s == MOTOR_MAX_SPEED_MM_S);
+	Race_Stop(false);
+	Test_TuneValue(CAR_TUNE_DEGRADED_SPEED, 20.0f);
+	sample = Test_Sample();
+	assert(Race_Start(&sample, 0U));
+	sample.lost = true;
+
+	for (now_ms = 10U; now_ms < CAR_VISION_STOP_MS; now_ms += 10U)
+	{
+		sample.sample_id++;
+		sample.received_ms = now_ms;
+		Race_Update(&sample, now_ms, 2.0f);
+		assert(Race_GetOutput().drive_speed_mm_s <= 20.0f);
+	}
+
+	Race_Stop(false);
+	CarTuning_Reset();
+}
+
+/** @brief 验证调参默认值、步进钳位以及运行时立即生效。 */
+static void Test_Tuning(void)
+{
+	vision_sample_t sample = Test_Sample();
+	uint32_t index = 0U;
+	float turn = 0.0f;
+
+	CarTuning_Reset();
+	assert(fabsf(CarTuning_Get(CAR_TUNE_DRIVE_SPEED) - CAR_DRIVE_SPEED_MM_S) <
+		0.00001f);
+	assert(fabsf(CarTuning_Get(CAR_TUNE_TURN_SPEED) - CAR_TURN_SPEED_MM_S) <
+		0.00001f);
+	assert(fabsf(CarTuning_Get(CAR_TUNE_DEGRADED_SPEED) -
+		CAR_DEGRADED_SPEED_MM_S) < 0.00001f);
+	assert(fabsf(CarTuning_Get(CAR_TUNE_POSITION_GAIN) -
+		CAR_POSITION_GAIN) < 0.00001f);
+	assert(fabsf(CarTuning_Get(CAR_TUNE_HEADING_GAIN) -
+		CAR_HEADING_GAIN) < 0.00001f);
+	assert(fabsf(CarTuning_Get(CAR_TUNE_STEERING_LIMIT) -
+		CAR_STEERING_LIMIT) < 0.00001f);
+	assert((uint8_t)CarTuning_Get(CAR_TUNE_VALID_MIN) == CAR_VALID_MIN);
+	assert(fabsf(CarTuning_Get(CAR_TUNE_TURN_THRESHOLD) -
+		CAR_TURN_SLOW_THRESHOLD) < 0.00001f);
+	assert(fabsf(CarTuning_Get(CAR_TUNE_UPHILL_SCALE) -
+		CAR_UPHILL_SPEED_SCALE) < 0.00001f);
+	assert(fabsf(CarTuning_Get(CAR_TUNE_CREST_SCALE) -
+		CAR_CREST_SPEED_SCALE) < 0.00001f);
+	assert(fabsf(CarTuning_Get(CAR_TUNE_DOWNHILL_SCALE) -
+		CAR_DOWNHILL_SPEED_SCALE) < 0.00001f);
+	assert(CarTuning_Get(CAR_TUNE_DIFF_THRESHOLD) == CAR_DIFF_THRESHOLD);
+	assert(CarTuning_Get(CAR_TUNE_DIFF_MAX_RATIO) == CAR_DIFF_MAX_RATIO);
+
+	/* 连续步进越过上下限时钳位。 */
+	for (index = 0U; index < 512U; index++)
+	{
+		CarTuning_Step(CAR_TUNE_DRIVE_SPEED, true);
+	}
+
+	assert(CarTuning_Get(CAR_TUNE_DRIVE_SPEED) == MOTOR_MAX_SPEED_MM_S);
+
+	for (index = 0U; index < 512U; index++)
+	{
+		CarTuning_Step(CAR_TUNE_DRIVE_SPEED, false);
+	}
+
+	assert(CarTuning_Get(CAR_TUNE_DRIVE_SPEED) == 0.0f);
+
+	for (index = 0U; index < 512U; index++)
+	{
+		CarTuning_Step(CAR_TUNE_UPHILL_SCALE, false);
+		CarTuning_Step(CAR_TUNE_CREST_SCALE, false);
+		CarTuning_Step(CAR_TUNE_DOWNHILL_SCALE, false);
+	}
+
+	assert(fabsf(CarTuning_Get(CAR_TUNE_UPHILL_SCALE) - 0.10f) < 0.00001f);
+	assert(fabsf(CarTuning_Get(CAR_TUNE_CREST_SCALE) - 0.10f) < 0.00001f);
+	assert(fabsf(CarTuning_Get(CAR_TUNE_DOWNHILL_SCALE) - 0.10f) < 0.00001f);
+
+	for (index = 0U; index < 512U; index++)
+	{
+		CarTuning_Step(CAR_TUNE_UPHILL_SCALE, true);
+		CarTuning_Step(CAR_TUNE_CREST_SCALE, true);
+		CarTuning_Step(CAR_TUNE_DOWNHILL_SCALE, true);
+	}
+
+	assert(CarTuning_Get(CAR_TUNE_UPHILL_SCALE) == 2.0f);
+	assert(CarTuning_Get(CAR_TUNE_CREST_SCALE) == 1.0f);
+	assert(CarTuning_Get(CAR_TUNE_DOWNHILL_SCALE) == 1.0f);
+
+	for (index = 0U; index < 512U; index++)
+	{
+		CarTuning_Step(CAR_TUNE_DIFF_THRESHOLD, false);
+		CarTuning_Step(CAR_TUNE_DIFF_MAX_RATIO, false);
+	}
+
+	assert(CarTuning_Get(CAR_TUNE_DIFF_THRESHOLD) == 0.0f);
+	assert(CarTuning_Get(CAR_TUNE_DIFF_MAX_RATIO) == 0.0f);
+
+	for (index = 0U; index < 512U; index++)
+	{
+		CarTuning_Step(CAR_TUNE_DIFF_THRESHOLD, true);
+		CarTuning_Step(CAR_TUNE_DIFF_MAX_RATIO, true);
+	}
+
+	assert(CarTuning_Get(CAR_TUNE_DIFF_THRESHOLD) == 100.0f);
+	assert(CarTuning_Get(CAR_TUNE_DIFF_MAX_RATIO) == 0.50f);
+	CarTuning_Reset();
+
+	/* 运行中修改 KP 后下一次更新即采用新增益。 */
+	sample.dev = 0.2f;
+	sample.k = 0.03f;
+	Race_Init();
+	assert(Race_Start(&sample, 0U));
+	Race_Update(&sample, 10U, 1.0f);
+	turn = Race_GetOutput().turn_target;
+	assert(fabsf(turn - 13.0f) < 0.00001f);
+	CarTuning_Step(CAR_TUNE_POSITION_GAIN, true);
+	Race_Update(&sample, 20U, 1.0f);
+	turn = Race_GetOutput().turn_target;
+	assert(fabsf(turn - 14.0f) < 0.00001f);
+	Race_Stop(false);
+
+	CarTuning_Reset();
+}
+
 int main(void)
 {
 	Test_Vision();
 	Test_VisionDiagnostics();
+	Test_SteeringSlew();
+	Test_SteeringSpeed();
+	Test_SlopeDriveLimits();
 	Test_RaceFault();
+	Test_TuningOutputLimits();
 	Test_Finish();
 	Test_Slope();
 	Test_Chassis();
+#if (CAR_STAGE >= CAR_STAGE_DRIVE)
+	Test_Differential();
+#endif
+	Test_Tuning();
 	printf("PASS: PVC behavior and output gates, stage %u\n", CAR_STAGE);
 
 	return 0;

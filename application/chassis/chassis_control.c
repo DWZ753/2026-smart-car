@@ -6,15 +6,50 @@
 #endif
 
 #if (CAR_STAGE >= CAR_STAGE_DRIVE)
-#include "tb6612.h"
+#include "motor.h"
+#include "tuning/car_tuning.h"
+#include <math.h>
+#endif
+
+#if (CAR_STAGE >= CAR_STAGE_DRIVE)
+/** @brief 根据平滑逻辑转向分配后轮速度，饱和时共同缩放。
+ * @param output_p 已启用且基础速度为正的比赛输出。
+ * @retval 无。
+ */
+static void Chassis_Drive(const race_output_t *output_p)
+{
+	float speed = fminf(output_p->drive_speed_mm_s, MOTOR_MAX_SPEED_MM_S);
+	float threshold = CarTuning_Get(CAR_TUNE_DIFF_THRESHOLD);
+	float limit = CarTuning_Get(CAR_TUNE_STEERING_LIMIT);
+	float maximum_ratio = CarTuning_Get(CAR_TUNE_DIFF_MAX_RATIO);
+	float ratio = 0.0f;
+	float difference = 0.0f;
+	float scale = 1.0f;
+	float left_speed = 0.0f;
+	float right_speed = 0.0f;
+
+	/* 没有有效介入区间时保持同速，也避免 Limit=0 时除零。 */
+	if (limit > threshold)
+	{
+		ratio = maximum_ratio * fmaxf(0.0f, fminf(1.0f,
+			(fabsf(output_p->turn_right) - threshold) / (limit - threshold)));
+	}
+
+	/* 逻辑右转为正：左侧外轮加速，右侧内轮减速。 */
+	difference = speed * copysignf(ratio, output_p->turn_right);
+	left_speed = speed + difference;
+	right_speed = speed - difference;
+	scale = fminf(1.0f, MOTOR_MAX_SPEED_MM_S /
+		fmaxf(left_speed, right_speed));
+
+	Motor_SetSpeedLR(left_speed * scale, right_speed * scale);
+}
 #endif
 
 void Chassis_Init(void)
 {
 #if (CAR_STAGE >= CAR_STAGE_DRIVE)
-	TB6612_A_Stop();
-	TB6612_B_Stop();
-	TB6612_Init();
+	Motor_Init();
 #endif
 
 #if (CAR_STAGE >= CAR_STAGE_STEERING)
@@ -39,26 +74,15 @@ void Chassis_Apply(const race_output_t *output_p)
 #endif
 
 #if (CAR_STAGE >= CAR_STAGE_DRIVE)
-	/* PWM 为零时制动；停止态后续帧不能绕过此门控。 */
-	if (!output_p->enabled || output_p->drive_pwm <= 0.0f)
+	/* 无效或零速度制动；先拒绝 NaN/Inf，避免分配限幅掩盖无效值。 */
+	if (!output_p->enabled || output_p->drive_speed_mm_s <= 0.0f ||
+		!isfinite(output_p->drive_speed_mm_s))
 	{
-		TB6612_A_Brake();
-		TB6612_B_Brake();
+		Motor_Brake();
 
 		return;
 	}
 
-	/* 两电机镜像安装，采用现有 Motor 模块的正向约定。 */
-#if (CAR_LEFT_DIRECTION == 1)
-	TB6612_A_Forward((uint32_t)output_p->drive_pwm);
-#else
-	TB6612_A_Backward((uint32_t)output_p->drive_pwm);
-#endif
-
-#if (CAR_RIGHT_DIRECTION == 1)
-	TB6612_B_Forward((uint32_t)output_p->drive_pwm);
-#else
-	TB6612_B_Backward((uint32_t)output_p->drive_pwm);
-#endif
+	Chassis_Drive(output_p);
 #endif
 }

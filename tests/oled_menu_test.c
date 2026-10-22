@@ -1,9 +1,14 @@
+#include "car_config.h"
 #include "car_menu.h"
+#include "car_menu_data.h"
 #include "i2c.h"
 #include "oled.h"
 #include "oled_canvas.h"
+#include "tuning/car_tuning.h"
 #include <assert.h>
+#include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 TestHardware test_hardware;
@@ -258,6 +263,7 @@ static void Test_Menu(void)
 	uint8_t index = 0U;
 	uint32_t previous_frames = 0U;
 	uint8_t frozen[OLED_CANVAS_BYTES] = {0};
+	char text[16] = {0};
 
 	menu_sim.model.vision.sample.sample_id = 1U;
 	menu_sim.model.vision.sample.dev = -0.3f;
@@ -268,6 +274,14 @@ static void Test_Menu(void)
 	menu_sim.model.vision.accepted = 1234U;
 	menu_sim.model.vision.rejected = 2U;
 	menu_sim.model.race.phase = RACE_READY;
+	menu_sim.model.race.turn_right = 8.0f;
+	menu_sim.model.race.turn_target = 60.0f;
+	MenuData_Value(CAR_MENU_RUN, 5U, &menu_sim.model, 0U,
+		text, sizeof(text));
+	assert(strcmp(text, "+8.0") == 0);
+	MenuData_Value(CAR_MENU_RUN, 6U, &menu_sim.model, 0U,
+		text, sizeof(text));
+	assert(strcmp(text, "+60.0") == 0);
 	Test_Settle();
 	Test_Save("menu_root.bin");
 	assert(Menu_KeyEvent(CAR_MENU_KEY_UP | CAR_MENU_KEY_DOWN) ==
@@ -301,13 +315,13 @@ static void Test_Menu(void)
 	Menu_KeyEvent(CAR_MENU_KEY_CONFIRM);
 	assert(Menu_GetStatus().row == 2U);
 
-	for (index = 0U; index < 4U; index++)
+	for (index = 0U; index < 5U; index++)
 	{
 		Menu_KeyEvent(CAR_MENU_KEY_DOWN);
 	}
 
-	assert(Menu_GetStatus().row == 6U);
-	assert(Menu_GetStatus().scroll_top == 3U);
+	assert(Menu_GetStatus().row == 7U);
+	assert(Menu_GetStatus().scroll_top == 4U);
 	Test_Advance(900U, "scroll");
 	Test_Settle();
 	Test_Save("menu_run_bottom.bin");
@@ -315,7 +329,7 @@ static void Test_Menu(void)
 	Menu_KeyEvent(CAR_MENU_KEY_CONFIRM);
 	assert(Menu_GetStatus().popup);
 	Menu_KeyEvent(CAR_MENU_KEY_DOWN);
-	assert(Menu_GetStatus().row == 5U);
+	assert(Menu_GetStatus().row == 6U);
 	Test_Advance(800U, "popup");
 	Test_Settle();
 	Test_Save("menu_popup.bin");
@@ -368,6 +382,56 @@ static void Test_Menu(void)
 
 	Menu_KeyEvent(CAR_MENU_KEY_DOWN);
 	Menu_KeyEvent(CAR_MENU_KEY_CONFIRM);
+	assert(Menu_GetStatus().page == CAR_MENU_TUNE);
+	Test_Settle();
+	Test_Save("menu_tune.bin");
+	assert(MenuData_Count(CAR_MENU_TUNE) ==
+		1U + (uint8_t)CAR_TUNE_COUNT + 1U);
+	assert(fabsf(CarTuning_Get(CAR_TUNE_DRIVE_SPEED) - CAR_DRIVE_SPEED_MM_S) <
+		0.001f);
+
+	/* 编辑 Drive PWM：确认进入、上下改值、返回退出且不停止。 */
+	Menu_KeyEvent(CAR_MENU_KEY_DOWN);
+	assert(Menu_GetStatus().row == 1U);
+	Menu_KeyEvent(CAR_MENU_KEY_CONFIRM);
+	assert(Menu_GetStatus().popup);
+	Menu_KeyEvent(CAR_MENU_KEY_UP);
+	assert(fabsf(CarTuning_Get(CAR_TUNE_DRIVE_SPEED) -
+		(CAR_DRIVE_SPEED_MM_S + 10.0f)) < 0.001f);
+	assert(Menu_GetStatus().row == 1U);
+	Menu_KeyEvent(CAR_MENU_KEY_DOWN);
+	assert(fabsf(CarTuning_Get(CAR_TUNE_DRIVE_SPEED) - CAR_DRIVE_SPEED_MM_S) <
+		0.001f);
+	Test_Advance(400U, "tune_edit");
+	assert(Menu_KeyEvent(CAR_MENU_KEY_BACK) == CAR_MENU_ACTION_NONE);
+	assert(!Menu_GetStatus().popup);
+	assert(Menu_GetStatus().page == CAR_MENU_TUNE);
+
+	/* 改值后恢复默认值。 */
+	Menu_KeyEvent(CAR_MENU_KEY_CONFIRM);
+	Menu_KeyEvent(CAR_MENU_KEY_UP);
+	Menu_KeyEvent(CAR_MENU_KEY_CONFIRM);
+	assert(fabsf(CarTuning_Get(CAR_TUNE_DRIVE_SPEED) -
+		(CAR_DRIVE_SPEED_MM_S + 10.0f)) < 0.001f);
+
+	for (index = 0U; index < (uint8_t)CAR_TUNE_COUNT; index++)
+	{
+		Menu_KeyEvent(CAR_MENU_KEY_DOWN);
+	}
+
+	assert(Menu_GetStatus().row == (uint8_t)CAR_TUNE_COUNT + 1U);
+	assert(Menu_GetStatus().scroll_top == (uint8_t)CAR_TUNE_COUNT - 2U);
+	Menu_KeyEvent(CAR_MENU_KEY_CONFIRM);
+	assert(fabsf(CarTuning_Get(CAR_TUNE_DRIVE_SPEED) - CAR_DRIVE_SPEED_MM_S) <
+		0.001f);
+	Menu_KeyEvent(CAR_MENU_KEY_CONFIRM);
+	Test_Settle();
+	Test_Save("menu_tune_bottom.bin");
+	assert(Menu_KeyEvent(CAR_MENU_KEY_BACK) == CAR_MENU_ACTION_STOP);
+	assert(Menu_GetStatus().page == CAR_MENU_ROOT);
+
+	Menu_KeyEvent(CAR_MENU_KEY_DOWN);
+	Menu_KeyEvent(CAR_MENU_KEY_CONFIRM);
 	assert(Menu_GetStatus().page == CAR_MENU_RAW);
 	menu_sim.model.uart_ready = true;
 	menu_sim.model.uart_received = 1234U;
@@ -407,6 +471,71 @@ static void Test_Menu(void)
 	Test_Settle();
 }
 
+/** @brief 从编辑入口修改全部参数，检查 Control 同步及恢复默认。 */
+static void Test_ControlSync(void)
+{
+	uint8_t row = 0U;
+	char edited[CAR_TUNE_COUNT][16] = {{0}};
+	char text[16] = {0};
+	uint8_t edited_screen[OLED_CANVAS_BYTES] = {0};
+
+	CarTuning_Reset();
+	Menu_KeyEvent(CAR_MENU_KEY_UP);
+	Menu_KeyEvent(CAR_MENU_KEY_CONFIRM);
+	assert(Menu_GetStatus().page == CAR_MENU_TUNE);
+	Menu_KeyEvent(CAR_MENU_KEY_DOWN);
+	assert(Menu_GetStatus().row == 0U);
+
+	for (row = 1U; row <= (uint8_t)CAR_TUNE_COUNT; row++)
+	{
+		Menu_KeyEvent(CAR_MENU_KEY_DOWN);
+		Menu_KeyEvent(CAR_MENU_KEY_CONFIRM);
+		Menu_KeyEvent(CAR_MENU_KEY_UP);
+		Menu_KeyEvent(CAR_MENU_KEY_CONFIRM);
+		MenuData_Value(CAR_MENU_TUNE, row, &menu_sim.model, 0U,
+			edited[row - 1U], sizeof(edited[0]));
+		assert(fabsf(strtof(edited[row - 1U], NULL) -
+			CarTuning_Get((car_tune_id_e)(row - 1U))) < 0.00001f);
+	}
+
+	Menu_KeyEvent(CAR_MENU_KEY_BACK);
+	Menu_KeyEvent(CAR_MENU_KEY_UP);
+	Menu_KeyEvent(CAR_MENU_KEY_CONFIRM);
+	assert(Menu_GetStatus().page == CAR_MENU_CONTROL);
+	assert(MenuData_Count(CAR_MENU_CONTROL) ==
+		(uint8_t)CAR_TUNE_COUNT + 2U);
+	Test_Settle();
+	Test_Save("menu_control_edited.bin");
+
+	for (row = 1U; row <= (uint8_t)CAR_TUNE_COUNT; row++)
+	{
+		MenuData_Value(CAR_MENU_CONTROL, row, &menu_sim.model, 0U,
+			text, sizeof(text));
+		assert(strcmp(text, edited[row - 1U]) == 0);
+		assert(strcmp(MenuData_Label(CAR_MENU_CONTROL, row),
+			MenuData_Label(CAR_MENU_TUNE, row)) == 0);
+		Menu_KeyEvent(CAR_MENU_KEY_DOWN);
+	}
+
+	Test_Settle();
+	Test_Save("menu_control_bottom.bin");
+	memcpy(edited_screen, display_mock.screen, sizeof(edited_screen));
+	CarTuning_Reset();
+	Test_Settle();
+	assert(memcmp(edited_screen, display_mock.screen,
+		sizeof(edited_screen)) != 0);
+	Test_Save("menu_control_reset.bin");
+
+	for (row = 1U; row <= (uint8_t)CAR_TUNE_COUNT; row++)
+	{
+		MenuData_Value(CAR_MENU_CONTROL, row, &menu_sim.model, 0U,
+			text, sizeof(text));
+		assert(strcmp(text, edited[row - 1U]) != 0);
+	}
+
+	Menu_KeyEvent(CAR_MENU_KEY_BACK);
+}
+
 /** @brief 连续传输失败仅关闭显示，不进入旧的延时总线恢复。 */
 static void Test_DisplayFailure(void)
 {
@@ -433,6 +562,7 @@ int main(void)
 	Menu_Init();
 	Test_CanvasAndDriver();
 	Test_Menu();
+	Test_ControlSync();
 	Test_DisplayFailure();
 	puts("PASS: canvas, navigation, dirty transfers "
 		"and display failure isolation");
