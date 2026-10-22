@@ -44,7 +44,7 @@
 | `MOTOR_MAX_RPM` | 300 RPM | 电机实测最高转速 |
 | `MOTOR_MAX_SPEED_MM_S` | ~2136 mm/s | 最大线速度 = MaxRPM × 周长 / 60 |
 | `MOTOR_MIN_DUTY` | 100 | 最低启动 PWM 占空比（低于此值电机不转） |
-| `MOTOR_MAX_PWM_DUTY` | PWM_PERIOD_COUNT - 1 | 最大 PWM 占空比 |
+| `MOTOR_MAX_PWM_DUTY` | PWM_PERIOD_COUNT - 1 | 模块私有的最大 PWM 计数 |
 
 ### 测速滤波参数
 
@@ -66,9 +66,12 @@
 
 #### `void Motor_Init(void)`
 
-电机初始化。停止电机、清零编码器、使能 GPIO 中断、注册 PIT Control Tick 回调（20ms 速度更新）。
+电机初始化。停止电机、启动驱动 PWM 定时器、清零编码器、使能 GPIO 中断、
+注册 PIT Control Tick 回调（20ms 测速处理）。
 
-> 此函数由 `Board_Init()` 自动调用。
+本工程由三级及以上的 Chassis_Init 调用，application 无需另外初始化 TB6612。
+Motor_SetSpeed / Motor_SetSpeedLR 接收 mm/s，电气方向由本模块的
+MOTOR_LEFT_DIRECTION / MOTOR_RIGHT_DIRECTION 配置。调用者使用正值表示前进。
 
 #### `void Motor_SetSpeed(float speed_mm_s)`
 
@@ -80,9 +83,12 @@
 | | 范围：`[-MOTOR_MAX_SPEED_MM_S, +MOTOR_MAX_SPEED_MM_S]` |
 
 **内部处理：**
-1. 将速度绝对值转换为 PWM 占空比：`duty = speed / MaxSpeed × MaxDuty`
+1. 有效速度在浮点域先限幅，再换算：`duty = speed / MaxSpeed × MaxDuty`
 2. 若 `duty < MOTOR_MIN_DUTY`：执行制动（死区保护）
 3. 根据速度符号决定前进/后退方向
+
+非有限速度命令执行两轮制动。当前为开环速度映射，参数单位并不代表已实现轮速闭环。
+模块转换、启动、方向和制动回归可运行 `python tools/run_motor_tests.py`。
 
 #### `void Motor_Brake(void)`
 
@@ -181,4 +187,7 @@ Motor_SetSpeed(output);
 
 ## 架构说明
 
-小车采用**阿克曼转向**，由舵机控制前轮转角，`Motor_SetSpeed()` 统一驱动后轮两路电机。无需差速控制。
+小车采用前轮舵机转向、后轮双电机驱动。
+application/chassis 按平滑逻辑转向分配内外轮速度，调用 `Motor_SetSpeedLR()`；
+差速策略与参数属于应用层，motor 负责速度换算、极性、限幅和制动。
+`Motor_SetSpeed()` 仍保留为两轮同命令入口。当前差速是经验比例辅助，没有轮速闭环。

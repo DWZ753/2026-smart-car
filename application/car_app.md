@@ -32,9 +32,9 @@ modules/vision：纯字节协议、序号和观测缓存，无 UART 或执行器
 modules/slope：纯 pitch 基准、滤波、滞回和持续时间判断
 
 application/race：dev/k 跟踪、驱动目标、比赛状态和停止锁定
-application/chassis：唯一舵机与 TB6612 输出入口，按 CAR_STAGE 裁剪
+application/chassis：分配左右轮速度，唯一舵机与 motor 调用入口，按级别裁剪
 
-bsp/uart、modules/servo、modules/tb6612、modules/imu、modules/key
+bsp/uart、modules/servo、modules/motor、modules/imu、modules/key
   继续复用已有设备接口
 ```
 
@@ -64,19 +64,35 @@ CAR_SERVO_DIRECTION 默认 +1 只是初始约定，必须在二级确认实际�
 ## 4. 算法与初值
 
 ```text
-turn_right = limit(50 * dev + 100 * k, -60, 60)
+turn_target = limit(KP * dev + KH * k, -Limit, Limit)
+turn_right += limit(turn_target - turn_right, -step, step)
+step = Steer_slew * dt
 ```
 
 dev 为 [-1,1]，k 单位 px/row；两个正值都要求右转。
-位置增益 50、方向增益 100、开环 PWM 1000/10000 均为待调起始值。
+位置增益、方向增益和开环速度命令的上电初值见 car_config.h。
 这些量在启动时从 [car_config.h](car_config.h) 复制到 RAM 调参表，
 可从 Debug tune 页实时修改，改动在下一个 10 ms 控制周期生效。
 参数不写 Flash，掉电或复位后恢复配置头默认值。
 不启用积分，方向反馈不再求时间微分，也不套用旧灰度 PID 参数。
-大转向时降低 PWM；坡道阶段进一步乘 0.65，不自动提高上坡驱动。
-是否需要上坡补偿留待实车，不用几何参数估算实际速度。
+大转向时降低速度命令；坡道阶段按上坡/坡顶/下坡分别乘 1.25/0.80/0.65。
+上坡比例允许调到 2.00，坡顶/下坡最高 1.00，速度目标不超过 motor 模块上限。
+上坡补偿不放大视觉降级速度上限；坡顶和下坡仍按各自比例降低降级目标。
+转向档目标取 Drive speed 与 Turn speed 的较小值，调低直道目标不会转弯加速。
+短时丢线保持的旧转向也会立即按当前 Limit 重新限幅。
+转向变化率默认 800 单位/秒，10 ms 最多变化 8；实时项为 Steer slew。
+设为 0 直通目标；转向 dt 最多取两个控制周期，防止卡顿后大幅跳变。
+降速判断采用目标与输出的最大绝对值，避免输出尚在跟随时错误恢复直道速度。
+保留当前直道/转弯/降级默认值 1200/800/300 mm/s；上坡可靠直行目标为 1500 mm/s。
 
-驱动量上升按 2000 计数/秒，下降按 10000 计数/秒。
+chassis 根据平滑后的逻辑 turn_right 连续介入差速，不另行解释 dev/k 或元素类型。
+默认转向幅度超过 25 开始介入，到当前 Limit=60 时，外轮加 20%、内轮减 20%。
+左右轮通过 Motor_SetSpeedLR 下发；外轮超速时两轮共同缩放，保持命令比例。
+Diff ratio=0 或 Diff start>=Limit 时关闭辅助；零速及未启用仍直接制动。
+Speed mm/s 显示的是差速分配前基础速度，最终两轮命令可能不同。
+经验差速没有增加轮速闭环或车辆几何模型；参数详见实时调参说明。
+
+速度命令上升按 427 mm/s²，下降按 2136 mm/s²。
 到达终点后按斜坡降到零，再保持短路制动；本地停止和故障直接制动。
 驱动量降到零表示命令停止，不是测得实际零速度。
 
@@ -87,6 +103,8 @@ dev 为 [-1,1]，k 单位 px/row；两个正值都要求右转。
 50 ms 没有可靠新测量时降驱动，100 ms 时故障停止。
 新的丢线帧不延长最后可靠几何的有效期，重复 seq 也不刷新有效期。
 短时丢线仅有限保持最后转向，不进行主动搜索或无限盲走。
+明确丢线、质量不足或有效观测年龄达到 50 ms 时冻结当前输出，
+不再朝旧目标继续推进；100 ms 故障制动，目标及输出转向同时清零。
 conf 只评价元素；几何可靠性主要看 valid/lost 和年龄。
 
 坡道相对 pitch 使用平地均值，预热 100 次、基准均值 100 次，周期 10 ms。
@@ -98,7 +116,7 @@ conf 只评价元素；几何可靠性主要看 valid/lost 和年龄。
 调试器可查看模块内部静态状态，业务代码通过 getter 获取副本：
 
 - Vision_GetStatus()：最新 dev/k、seq、sample_id、接收时刻及各类计数。
-- Race_GetOutput()：比赛状态、右转参考、PWM 目标、输出使能。
+- Race_GetOutput()：比赛状态、右转参考、速度命令（mm/s）、输出使能。
 - Slope_GetStatus()：基准 pitch、相对 pitch、就绪标志和坡道阶段。
 - car_state.late_updates：主循环控制迟到次数，供调试器观察。
 
@@ -127,10 +145,13 @@ build_firmware.py 使用本机已有 SDK 2.11、SysConfig 1.26.2 和 tiarmclang 
 当前默认启用 OLED，磁贴、列表、选择器与弹窗说明见 [菜单说明](menu/car_menu.md)。
 主循环优先处理串口和控制，菜单在低优先级位置按脏块刷新。
 CAR_ENABLE_MENU=0 可关闭菜单；此时一级不再注册按键。
-Debug tune 页可调 Drive/Turn/Degraded PWM、KP、KH、转向限幅、
-valid 门限、转向降速阈值和坡道比例；确认参数行进入编辑，
+Debug tune 页可调 Drive/Turn/Degraded speed（mm/s）、KP、KH、转向限幅、
+valid 门限、转向降速阈值、上坡/坡顶/下坡比例、转向变化率及差速参数；确认参数行进入编辑，
 上下键增减，Restore defaults 恢复默认。
 调参表位于 [application/tuning/car_tuning.c](tuning/car_tuning.c)，仅驻留 RAM。
+Control 页列出相同顺序的十四项当前值和 Stage，Run status 的 Speed mm/s 则是差速分配前基础速度命令，不是实测速度。
+Turn target 显示目标，Turn out 显示变化率限制后的实际转向命令。
+参数范围、边界和本次检查结果见 [实时调参说明](tuning/car_tuning.md)。
 
 ## 视觉接收诊断
 

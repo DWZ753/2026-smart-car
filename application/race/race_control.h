@@ -16,13 +16,15 @@ typedef enum
 	RACE_FAULT
 } race_phase_e;
 
-/** 单一底盘参考，drive_pwm 是计数值，不是速度反馈。 */
+/** 单一底盘参考，drive_speed_mm_s 是 mm/s 速度命令，不是反馈。 */
 typedef struct
 {
 	race_phase_e phase;
 	float turn_right;
-	float drive_pwm;
+	float drive_speed_mm_s;
 	bool enabled;
+	/** 限幅后的目标转向；turn_right 为变化率限制后的输出命令。 */
+	float turn_target;
 } race_output_t;
 
 /** @brief 初始化停止状态。 @retval 无。 */

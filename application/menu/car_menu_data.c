@@ -4,7 +4,7 @@
 #include <math.h>
 #include <stdio.h>
 
-#define MENU_PAGE_ROW_CAPACITY 12U
+#define MENU_PAGE_ROW_CAPACITY 16U
 #define MENU_TUNE_ROWS (1U + (unsigned)CAR_TUNE_COUNT + 1U)
 
 /** 每页第零项为返回入口；仅运行页的 Start/Stop 产生应用命令。 */
@@ -16,14 +16,19 @@ typedef struct
 
 static const menu_page_t menu_pages[] =
 {
-	{7U, {"- Run status", "Start", "Stop", "State", "PWM", "Turn", "Link"}},
+	{8U, {"- Run status", "Start", "Stop", "State", "Speed mm/s",
+		"Turn out", "Turn target", "Link"}},
 	{10U, {"- Vision", "Dev", "K", "Valid", "Conf", "Lost", "Seq",
 		"Age ms", "Rx", "Bad"}},
 	{5U, {"- IMU pitch", "Pitch", "Base", "Phase", "Ready"}},
-	{6U, {"- Control", "KP", "KH", "PWM", "Limit", "Stage"}},
-	{MENU_TUNE_ROWS, {"- Debug tune", "Drive PWM", "Turn PWM",
-		"Degraded PWM", "KP", "KH", "Limit", "Valid min",
-		"Turn thresh", "Slope scale", "Restore defaults"}}
+	{MENU_TUNE_ROWS, {"- Control", "Drive speed", "Turn speed",
+		"Degr speed", "KP", "KH", "Limit", "Valid min",
+		"Turn thresh", "Up scale", "Crest scale", "Down scale",
+		"Steer slew", "Diff start", "Diff ratio", "Stage"}},
+	{MENU_TUNE_ROWS, {"- Debug tune", "Drive speed", "Turn speed",
+		"Degr speed", "KP", "KH", "Limit", "Valid min",
+		"Turn thresh", "Up scale", "Crest scale", "Down scale",
+		"Steer slew", "Diff start", "Diff ratio", "Restore defaults"}}
 };
 
 /* 列表页必须从 RUN 连续排列到 RAW 之前，RAW 为独立整屏页面。 */
@@ -73,7 +78,6 @@ void MenuData_Value(car_menu_page_e page, uint8_t row,
 {
 	uint32_t age = now_ms - model_p->vision.sample.received_ms;
 	uint32_t value = 0U;
-	float number = 0.0f;
 
 	text_p[0] = '\0';
 
@@ -96,11 +100,15 @@ void MenuData_Value(car_menu_page_e page, uint8_t row,
 				break;
 			case 4U:
 				snprintf(text_p, capacity, "%ld",
-					(long)model_p->race.drive_pwm);
+					(long)model_p->race.drive_speed_mm_s);
 				break;
 			case 5U:
 				MenuData_Float(text_p, capacity,
 					model_p->race.turn_right, 10);
+				break;
+			case 6U:
+				MenuData_Float(text_p, capacity,
+					model_p->race.turn_target, 10);
 				break;
 			default:
 				snprintf(text_p, capacity, "%s",
@@ -166,33 +174,16 @@ void MenuData_Value(car_menu_page_e page, uint8_t row,
 				(model_p->slope.ready ? "YES" : "WAIT"));
 		}
 	}
-	else if (page == CAR_MENU_CONTROL)
-	{
-		if (row == 1U || row == 2U)
-		{
-			number = row == 1U ?
-				CarTuning_Get(CAR_TUNE_POSITION_GAIN) :
-				CarTuning_Get(CAR_TUNE_HEADING_GAIN);
-			MenuData_Float(text_p, capacity, number, 10);
-		}
-		else
-		{
-			value = row == 3U ?
-				(uint32_t)CarTuning_Get(CAR_TUNE_DRIVE_PWM) :
-				(row == 4U ?
-				(uint32_t)CarTuning_Get(CAR_TUNE_STEERING_LIMIT) :
-				CAR_STAGE);
-			snprintf(text_p, capacity, "%lu", (unsigned long)value);
-		}
-	}
 	else
 	{
-		/* CAR_MENU_TUNE：最后一行为恢复默认值，不显示数值。 */
+		/* Control 与 Debug tune 共用参数顺序、数值来源及显示格式。 */
 		if (row >= 1U && row <= (uint8_t)CAR_TUNE_COUNT)
 		{
 			car_tune_id_e id = (car_tune_id_e)(row - 1U);
 
-			if (id == CAR_TUNE_SLOPE_SCALE)
+			if (id == CAR_TUNE_UPHILL_SCALE ||
+				id == CAR_TUNE_CREST_SCALE || id == CAR_TUNE_DOWNHILL_SCALE ||
+				id == CAR_TUNE_DIFF_MAX_RATIO)
 			{
 				MenuData_Float(text_p, capacity,
 					CarTuning_Get(id), 100);
@@ -202,6 +193,10 @@ void MenuData_Value(car_menu_page_e page, uint8_t row,
 				snprintf(text_p, capacity, "%ld",
 					(long)roundf(CarTuning_Get(id)));
 			}
+		}
+		else if (page == CAR_MENU_CONTROL)
+		{
+			snprintf(text_p, capacity, "%u", CAR_STAGE);
 		}
 	}
 }

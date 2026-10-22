@@ -12,7 +12,7 @@ def main():
     includes = [
         "tests/mock/car_app", "tests/mock", ".", "application",
         "application/menu", "application/race", "application/chassis",
-        "modules/vision", "modules/slope", "modules/imu", "modules/key",
+        "modules/vision", "modules/slope", "modules/motor", "modules/imu", "modules/key",
         "bsp/uart",
     ]
     sources = [

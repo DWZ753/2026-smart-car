@@ -6,6 +6,9 @@
 #include "tb6612.h"
 #include "pit_control_tick.h"
 #include <stdbool.h>
+#include <math.h>
+
+#define MOTOR_MAX_PWM_DUTY (TB6612_PWM_PERIOD_COUNT - 1U)
 
 // PWM 占空比下限：低于此值电机无法转动
 #define MOTOR_MIN_DUTY 100
@@ -48,6 +51,7 @@ static bool    g_first_window;       // 首个窗口标志（EMA 初始化用）
 void Motor_Init(void)
 {
     Motor_Stop();
+    TB6612_Init();
     Motor_ResetEncoder();
     NVIC_EnableIRQ(GPIO_MOTORs_INT_IRQN);
     PIT_Control_Tick_RegisterCallback(Motor_TickHandler);
@@ -55,58 +59,61 @@ void Motor_Init(void)
 
 void Motor_SetSpeed(float speed_mm_s)
 {
-    float abs_speed = (speed_mm_s >= 0.0f) ? speed_mm_s : -speed_mm_s;
-
-    uint32_t duty = (uint32_t)(abs_speed / MOTOR_MAX_SPEED_MM_S * MOTOR_MAX_PWM_DUTY);
-
-    if (duty > MOTOR_MAX_PWM_DUTY)
-        duty = MOTOR_MAX_PWM_DUTY;
-
-    if (duty < MOTOR_MIN_DUTY)
-    {
-        Motor_Brake();
-        return;
-    }
-
-    if (speed_mm_s >= 0.0f)
-    {
-        TB6612_A_Forward(duty);
-        TB6612_B_Backward(duty);
-    }
-    else
-    {
-        TB6612_A_Backward(duty);
-        TB6612_B_Forward(duty);
-    }
+	Motor_SetSpeedLR(speed_mm_s, speed_mm_s);
 }
 
+/** @brief 把左右轮速度命令换算为驱动量，内部处理限幅与安装极性。
+ * @param left_mm_s 左轮速度命令，mm/s。
+ * @param right_mm_s 右轮速度命令，mm/s。
+ * @retval 无。
+ */
 void Motor_SetSpeedLR(float left_mm_s, float right_mm_s)
 {
-    /* ---- 左轮（A 通道） ---- */
-    float abs_left = (left_mm_s >= 0.0f) ? left_mm_s : -left_mm_s;
-    uint32_t duty_left = (uint32_t)(abs_left / MOTOR_MAX_SPEED_MM_S * MOTOR_MAX_PWM_DUTY);
-    if (duty_left > MOTOR_MAX_PWM_DUTY)
-        duty_left = MOTOR_MAX_PWM_DUTY;
+	float abs_left = 0.0f;
+	float abs_right = 0.0f;
+	uint32_t duty_left = 0U;
+	uint32_t duty_right = 0U;
 
-    if (duty_left < MOTOR_MIN_DUTY)
-        TB6612_A_Brake();
-    else if (left_mm_s >= 0.0f)
-        TB6612_A_Forward(duty_left);
-    else
-        TB6612_A_Backward(duty_left);
+	if (!isfinite(left_mm_s) || !isfinite(right_mm_s))
+	{
+		Motor_Brake();
 
-    /* ---- 右轮（B 通道，安装方向镜像） ---- */
-    float abs_right = (right_mm_s >= 0.0f) ? right_mm_s : -right_mm_s;
-    uint32_t duty_right = (uint32_t)(abs_right / MOTOR_MAX_SPEED_MM_S * MOTOR_MAX_PWM_DUTY);
-    if (duty_right > MOTOR_MAX_PWM_DUTY)
-        duty_right = MOTOR_MAX_PWM_DUTY;
+		return;
+	}
 
-    if (duty_right < MOTOR_MIN_DUTY)
-        TB6612_B_Brake();
-    else if (right_mm_s >= 0.0f)
-        TB6612_B_Backward(duty_right);
-    else
-        TB6612_B_Forward(duty_right);
+	/* 浮点域先限幅，避免超范围命令转换为整数时溢出。 */
+	abs_left = fminf(fabsf(left_mm_s), MOTOR_MAX_SPEED_MM_S);
+	abs_right = fminf(fabsf(right_mm_s), MOTOR_MAX_SPEED_MM_S);
+	duty_left = (uint32_t)(abs_left / MOTOR_MAX_SPEED_MM_S *
+		MOTOR_MAX_PWM_DUTY);
+	duty_right = (uint32_t)(abs_right / MOTOR_MAX_SPEED_MM_S *
+		MOTOR_MAX_PWM_DUTY);
+
+	if (duty_left < MOTOR_MIN_DUTY)
+	{
+		TB6612_A_Brake();
+	}
+	else if (left_mm_s * MOTOR_LEFT_DIRECTION >= 0.0f)
+	{
+		TB6612_A_Forward(duty_left);
+	}
+	else
+	{
+		TB6612_A_Backward(duty_left);
+	}
+
+	if (duty_right < MOTOR_MIN_DUTY)
+	{
+		TB6612_B_Brake();
+	}
+	else if (right_mm_s * MOTOR_RIGHT_DIRECTION >= 0.0f)
+	{
+		TB6612_B_Forward(duty_right);
+	}
+	else
+	{
+		TB6612_B_Backward(duty_right);
+	}
 }
 
 void Motor_Brake(void)

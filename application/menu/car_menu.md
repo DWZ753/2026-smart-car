@@ -37,17 +37,29 @@
 首页六项为 Run status、Vision、IMU pitch、Control、Debug tune、UART raw。
 二级列表保留各自选中行和视角，超过四行后滚动显示，侧边条表示当前位置。
 
-- 运行列表：Start、Stop、State、PWM、Turn、Link。
+- 运行列表：Start、Stop、State、Speed mm/s、Turn out、Turn target、Link。
 - 视觉列表：Dev、K、Valid、Conf、Lost、Seq、Age ms、Rx、Bad。
 - 坡道列表：相对 Pitch、平地 Base、Phase、Ready。
-- 控制列表：KP、KH、PWM、Limit、Stage；数值反映当前运行时参数。
-- 调参列表：Drive PWM、Turn PWM、Degraded PWM、KP、KH、Limit、
-  Valid min、Turn thresh、Slope scale、Restore defaults。
+- 控制列表：十四项实时参数，顺序与 Debug tune 相同，最后一项为 Stage。
+- 调参列表：Drive speed、Turn speed、Degr speed、KP、KH、Limit、
+  Valid min、Turn thresh、Up scale、Crest scale、Down scale、Steer slew、
+  Diff start、Diff ratio、Restore defaults。
 
 调参页在参数行按确认打开编辑弹窗，上下键按固定步长增减，确认或返回退出编辑。
 修改直接写入 `application/tuning/car_tuning.c` 的 RAM 参数表，下一个 10 ms
 控制周期即生效，可在行驶中调整；掉电或复位后恢复 `car_config.h` 默认值。
 Restore defaults 一次恢复全部默认值。步长与上下限见该文件的规格表。
+Control 与 Debug tune 共用数值读取和格式化，均反映当前 RAM 参数。
+Up scale 默认 1.25，范围 0.10～2.00；Crest scale 默认 0.80，
+Down scale 默认 0.65，两者范围 0.10～1.00；三项步长均为 0.05。
+Diff start 默认 25，范围 0～100、步长 5；Diff ratio 默认 0.20，范围 0～0.50、步长 0.05。
+差速在 Diff start 到当前 Limit 间连续介入；比例为 0 或阈值不低于 Limit 时关闭。
+Drive speed 是直道基础目标；Run status 的 Speed mm/s 是降速、坡道及斜坡处理后的基础速度命令，
+随后 chassis 再分配左右轮速度，外轮饱和时共同缩放；该值不是实测速度或单轮速度。
+Turn target 是限幅后的目标，Turn out 是按变化率跟随后的舵机命令。
+Steer slew 默认 800 单位/秒，范围 0～3000，步长 100；0 关闭变化率限制。
+转弯档依据目标和输出中较大的绝对值触发，覆盖提前入弯和逐步回正。
+操作后不要复位来检查同步，复位会恢复编译时默认值。
 
 镜头、选择框 x/y/宽/高、展开量、标题和侧边条各有时间常数。
 选择框跨页面保持当前形状，目标在磁贴角标与列表反白框之间变化。

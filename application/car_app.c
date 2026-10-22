@@ -268,9 +268,19 @@ void Car_Update(void)
 	slope = Slope_GetStatus();
 	drive_scale = slope.ready ? 1.0f : 0.0f;
 
-	if (slope.phase != SLOPE_FLAT)
+	switch (slope.phase)
 	{
-		drive_scale *= CarTuning_Get(CAR_TUNE_SLOPE_SCALE);
+		case SLOPE_UPHILL:
+			drive_scale *= CarTuning_Get(CAR_TUNE_UPHILL_SCALE);
+			break;
+		case SLOPE_CREST:
+			drive_scale *= CarTuning_Get(CAR_TUNE_CREST_SCALE);
+			break;
+		case SLOPE_DOWNHILL:
+			drive_scale *= CarTuning_Get(CAR_TUNE_DOWNHILL_SCALE);
+			break;
+		default:
+			break;
 	}
 #endif
 

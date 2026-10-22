@@ -6,7 +6,9 @@
 #include "imu.h"
 #include "key.h"
 #include "uart.h"
+#include "tuning/car_tuning.h"
 #include <assert.h>
+#include <math.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -24,6 +26,7 @@ typedef struct
 	uint8_t frame[13];
 	uint8_t position;
 	uint8_t seq;
+	float pitch;
 } app_mock_t;
 
 static app_mock_t app_mock;
@@ -64,7 +67,7 @@ void IMU_Update(void)
 void IMU_GetEuler(float *roll_p, float *pitch_p, float *yaw_p)
 {
 	*roll_p = 0.0f;
-	*pitch_p = 0.0f;
+	*pitch_p = app_mock.pitch;
 	*yaw_p = 0.0f;
 }
 UART_Handle *UART_Init(const UART_Config *config_p)
@@ -140,6 +143,78 @@ static void Test_Frame(void)
 	app_mock.position = 0U;
 }
 
+#if (CAR_STAGE == CAR_STAGE_SLOPE) && (CAR_ENABLE_MENU == 1U)
+/** @brief 用真实坡道判定和应用调度推进一段连续观测。 */
+static void Test_Pitch(float pitch, uint16_t frames)
+{
+	uint16_t index = 0U;
+
+	app_mock.pitch = pitch;
+
+	for (index = 0U; index < frames; index++)
+	{
+		Test_Frame();
+		app_mock.now_ms += CAR_CONTROL_PERIOD_MS;
+		Car_Update();
+	}
+}
+
+/** @brief 验证倒装 IMU 的上坡加速、坡顶减速和下坡独立比例。 */
+static void Test_SlopeSpeeds(void)
+{
+	uint16_t index = 0U;
+	float uphill_speed = 0.0f;
+
+	assert(Slope_GetStatus().ready);
+	Test_Pitch(0.0f, 1U);
+	app_mock.action = CAR_MENU_ACTION_START;
+	app_mock.key_callback(2U);
+	Car_Update();
+	assert(Race_GetOutput().enabled);
+	Test_Pitch(0.0f, 300U);
+	assert(fabsf(Race_GetOutput().drive_speed_mm_s -
+		CAR_DRIVE_SPEED_MM_S) < 0.01f);
+	Test_Pitch(-10.0f, 100U);
+	assert(Slope_GetStatus().phase == SLOPE_UPHILL);
+	assert(fabsf(Race_GetOutput().drive_speed_mm_s -
+		CAR_DRIVE_SPEED_MM_S * CAR_UPHILL_SPEED_SCALE) < 0.01f);
+	CarTuning_Step(CAR_TUNE_UPHILL_SCALE, true);
+	Test_Pitch(-10.0f, 40U);
+	uphill_speed = Race_GetOutput().drive_speed_mm_s;
+	assert(fabsf(uphill_speed - CAR_DRIVE_SPEED_MM_S *
+		CarTuning_Get(CAR_TUNE_UPHILL_SCALE)) < 0.01f);
+
+	for (index = 0U; index < 100U; index++)
+	{
+		Test_Pitch(0.0f, 1U);
+
+		if (Slope_GetStatus().phase == SLOPE_CREST)
+		{
+			break;
+		}
+	}
+
+	assert(index < 100U);
+	assert(Race_GetOutput().drive_speed_mm_s < uphill_speed);
+	Test_Pitch(0.0f, 9U);
+	assert(Slope_GetStatus().phase == SLOPE_CREST);
+	/* 坡顶窗口较短，验证按减速率跟随目标，不要求瞬间降到目标。 */
+	assert(fabsf(Race_GetOutput().drive_speed_mm_s -
+		fmaxf(CAR_DRIVE_SPEED_MM_S * CAR_CREST_SPEED_SCALE,
+			uphill_speed - CAR_DECEL_MM_S2 * 0.1f)) < 0.01f);
+	Test_Pitch(10.0f, 100U);
+	assert(Slope_GetStatus().phase == SLOPE_DOWNHILL);
+	assert(fabsf(Race_GetOutput().drive_speed_mm_s -
+		CAR_DRIVE_SPEED_MM_S * CAR_DOWNHILL_SPEED_SCALE) < 0.01f);
+	Test_Pitch(0.0f, 200U);
+	assert(Slope_GetStatus().phase == SLOPE_FLAT);
+	assert(fabsf(Race_GetOutput().drive_speed_mm_s -
+		CAR_DRIVE_SPEED_MM_S) < 0.01f);
+	Race_Stop(false);
+	CarTuning_Reset();
+}
+#endif
+
 int main(void)
 {
 	uint16_t index = 0U;
@@ -214,6 +289,10 @@ int main(void)
 	app_mock.key_callback(1U);
 	Car_Update();
 	assert(!Race_GetOutput().enabled);
+#endif
+
+#if (CAR_STAGE == CAR_STAGE_SLOPE) && (CAR_ENABLE_MENU == 1U)
+	Test_SlopeSpeeds();
 #endif
 
 	printf("PASS: application input gates, stage %u, menu %u\n",

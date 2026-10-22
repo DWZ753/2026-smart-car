@@ -1,5 +1,6 @@
 #include "car_tuning.h"
 #include "car_config.h"
+#include "motor.h"
 #include <stddef.h>
 #include <stdint.h>
 
@@ -14,29 +15,39 @@ typedef struct
 
 static const car_tune_spec_t tuning_specs[CAR_TUNE_COUNT] =
 {
-	{CAR_DRIVE_PWM, 0.0f, 4000.0f, 50.0f},
-	{CAR_TURN_PWM, 0.0f, 4000.0f, 50.0f},
-	{CAR_DEGRADED_PWM, 0.0f, 4000.0f, 25.0f},
+	{CAR_DRIVE_SPEED_MM_S, 0.0f, MOTOR_MAX_SPEED_MM_S, 10.0f},
+	{CAR_TURN_SPEED_MM_S, 0.0f, MOTOR_MAX_SPEED_MM_S, 10.0f},
+	{CAR_DEGRADED_SPEED_MM_S, 0.0f, MOTOR_MAX_SPEED_MM_S, 5.0f},
 	{CAR_POSITION_GAIN, 0.0f, 500.0f, 5.0f},
 	{CAR_HEADING_GAIN, 0.0f, 500.0f, 5.0f},
 	{CAR_STEERING_LIMIT, 0.0f, 100.0f, 5.0f},
 	{(float)CAR_VALID_MIN, 0.0f, 100.0f, 5.0f},
 	{CAR_TURN_SLOW_THRESHOLD, 0.0f, 100.0f, 5.0f},
-	{CAR_SLOPE_DRIVE_SCALE, 0.10f, 1.0f, 0.05f}
+	{CAR_UPHILL_SPEED_SCALE, 0.10f, 2.0f, 0.05f},
+	{CAR_CREST_SPEED_SCALE, 0.10f, 1.0f, 0.05f},
+	{CAR_DOWNHILL_SPEED_SCALE, 0.10f, 1.0f, 0.05f},
+	{CAR_STEERING_SLEW_PER_S, 0.0f, 3000.0f, 100.0f},
+	{CAR_DIFF_THRESHOLD, 0.0f, 100.0f, 5.0f},
+	{CAR_DIFF_MAX_RATIO, 0.0f, 0.50f, 0.05f}
 };
 
 /** 仅保存在 RAM，上电即为默认值。 */
 static float tuning_values[CAR_TUNE_COUNT] =
 {
-	CAR_DRIVE_PWM,
-	CAR_TURN_PWM,
-	CAR_DEGRADED_PWM,
+	CAR_DRIVE_SPEED_MM_S,
+	CAR_TURN_SPEED_MM_S,
+	CAR_DEGRADED_SPEED_MM_S,
 	CAR_POSITION_GAIN,
 	CAR_HEADING_GAIN,
 	CAR_STEERING_LIMIT,
 	(float)CAR_VALID_MIN,
 	CAR_TURN_SLOW_THRESHOLD,
-	CAR_SLOPE_DRIVE_SCALE
+	CAR_UPHILL_SPEED_SCALE,
+	CAR_CREST_SPEED_SCALE,
+	CAR_DOWNHILL_SPEED_SCALE,
+	CAR_STEERING_SLEW_PER_S,
+	CAR_DIFF_THRESHOLD,
+	CAR_DIFF_MAX_RATIO
 };
 
 float CarTuning_Get(car_tune_id_e id)

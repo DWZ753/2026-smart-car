@@ -40,7 +40,7 @@
                                     <listOptionValue value="${PROJECT_ROOT}/${ConfigName}"/>
                                     <listOptionValue value="${COM_TI_MSPM0_SDK_INSTALL_DIR}/source/third_party/CMSIS/Core/Include"/>
                                     <listOptionValue value="${COM_TI_MSPM0_SDK_INSTALL_DIR}/source"/>
-                                                                    <listOptionValue value="${PROJECT_ROOT}/application/comm"/>
+                                    <listOptionValue value="${PROJECT_ROOT}/application/comm"/>
                                     <listOptionValue value="${PROJECT_ROOT}/application"/>
                                     <listOptionValue value="${PROJECT_ROOT}/application/chassis"/>
                                     <listOptionValue value="${PROJECT_ROOT}/application/race"/>
