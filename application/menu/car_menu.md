@@ -47,11 +47,10 @@ Debug tune 顶部另有 Start/Stop，确认后直接发布启停命令且不离�
   Valid min、Turn thresh、Up scale、Crest scale、Down scale、Steer slew、
   Diff start、Diff ratio、Restore defaults。
 
-调参页把 Start/Stop 放在最上方，确认后直接发布应用命令，页面保持不变，
-因此可以启动后继续在同一页调整参数；Start 行右侧显示当前比赛状态。
-调参页在参数行按确认打开编辑弹窗，上下键按固定步长增减，确认或返回退出编辑。
-顶部 Start/Stop 按确认直接发布启停请求，页面和参数保持不变，调完无需切回运行页。
+调参页把 Start/Stop 放在最上方，确认后直接发布启停请求，页面和参数保持不变，
+因此可以启动后继续在同一页调整参数；Start/Stop 行右侧显示 `>`。
 Start 复用原应用的视觉、阶段与 IMU 就绪检查，失败时仍显示原有提示。
+调参页在参数行按确认打开编辑弹窗，上下键按固定步长增减，确认或返回退出编辑。
 修改直接写入 `application/tuning/car_tuning.c` 的 RAM 参数表，下一个 10 ms
 控制周期即生效，可在行驶中调整；掉电或复位后恢复 `car_config.h` 默认值。
 Restore defaults 需要二次确认：第一次确认显示 `Reset? 3=OK 4=No`，
