@@ -60,12 +60,12 @@ Restore defaults 需要二次确认：第一次确认显示 `Reset? 3=OK 4=No`�
 Control 与 Debug tune 共用数值读取和格式化，均反映当前 RAM 参数。
 Up scale 默认 1.25，范围 0.10～2.00；Crest scale 默认 0.80，
 Down scale 默认 0.65，两者范围 0.10～1.00；三项步长均为 0.05。
-Diff start 默认 25，范围 0～100、步长 5；Diff ratio 默认 0.20，范围 0～0.50、步长 0.05。
+Diff start 默认 5，范围 0～100、步长 5；Diff ratio 默认 0.40，范围 0～0.50、步长 0.05。
 差速在 Diff start 到当前 Limit 间连续介入；比例为 0 或阈值不低于 Limit 时关闭。
 Drive speed 是直道基础目标；Run status 的 Speed mm/s 是降速、坡道及斜坡处理后的基础速度命令，
 随后 chassis 再分配左右轮速度，外轮饱和时共同缩放；该值不是实测速度或单轮速度。
 Turn target 是限幅后的目标，Turn out 是按变化率跟随后的舵机命令。
-Steer slew 默认 800 单位/秒，范围 0～3000，步长 100；0 关闭变化率限制。
+Steer slew 默认 700 单位/秒，范围 0～3000，步长 100；0 关闭变化率限制。
 转弯档依据目标和输出中较大的绝对值触发，覆盖提前入弯和逐步回正。
 操作后不要复位来检查同步，复位会恢复编译时默认值。
 

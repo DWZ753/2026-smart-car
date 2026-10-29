@@ -24,6 +24,8 @@ typedef struct
 
 static actuator_mock_t actuator;
 
+static void Test_TuneValue(car_tune_id_e id, float value);
+
 void Servo_Init(void)
 {
 	actuator.servo_calls++;
@@ -245,6 +247,7 @@ static void Test_RaceFault(void)
 {
 	vision_sample_t sample = Test_Sample();
 	race_output_t output = {0};
+	float turn = 0.0f;
 
 	Race_Init();
 	assert(!Race_Start(&sample, CAR_VISION_SLOW_MS));
@@ -257,9 +260,10 @@ static void Test_RaceFault(void)
 	Race_Update(&sample, 10U, 1.0f);
 	output = Race_GetOutput();
 	assert(output.enabled);
-	assert(fabsf(output.turn_target - 13.0f) < 0.00001f);
+	turn = CAR_POSITION_GAIN * 0.2f + CAR_HEADING_GAIN * 0.03f;
+	assert(fabsf(output.turn_target - turn) < 0.00001f);
 	assert(fabsf(output.turn_right -
-		fminf(13.0f, CAR_STEERING_SLEW_PER_S * 0.01f)) < 0.00001f);
+		fminf(turn, CAR_STEERING_SLEW_PER_S * 0.01f)) < 0.00001f);
 	assert(output.drive_speed_mm_s > 0.0f);
 
 	sample.sample_id++;
@@ -400,6 +404,9 @@ static void Test_Chassis(void)
 	};
 	uint32_t previous_calls = 0U;
 
+	/* 本用例只验证输出门控，关闭差速以免受默认比例影响。 */
+	CarTuning_Reset();
+	Test_TuneValue(CAR_TUNE_DIFF_MAX_RATIO, 0.0f);
 	memset(&actuator, 0, sizeof(actuator));
 	Chassis_Init();
 	Chassis_Apply(&output);
@@ -430,6 +437,8 @@ static void Test_Chassis(void)
 	assert(previous_calls == 0U);
 	assert(actuator.brakes == 0U);
 #endif
+
+	CarTuning_Reset();
 }
 
 /** @brief 调低直道目标不能在转弯时加速，短时丢线也遵守新转向限幅。 */
@@ -530,11 +539,15 @@ static void Test_Differential(void)
 	uint32_t previous_calls = 0U;
 	float previous_diff = 0.0f;
 
+	/* 固定本用例假定的差速工作点，避免受默认参数变化影响。 */
 	CarTuning_Reset();
+	Test_TuneValue(CAR_TUNE_DIFF_THRESHOLD, 25.0f);
+	Test_TuneValue(CAR_TUNE_STEERING_LIMIT, 60.0f);
+	Test_TuneValue(CAR_TUNE_DIFF_MAX_RATIO, 0.20f);
 	Chassis_Apply(&output);
 	assert(actuator.left_speed == 800.0f);
 	assert(actuator.right_speed == 800.0f);
-	output.turn_right = CAR_DIFF_THRESHOLD;
+	output.turn_right = CarTuning_Get(CAR_TUNE_DIFF_THRESHOLD);
 	Chassis_Apply(&output);
 	assert(actuator.left_speed == actuator.right_speed);
 	output.turn_right += 0.01f;
@@ -636,6 +649,7 @@ static void Test_SteeringSlew(void)
 	assert(CarTuning_Get(CAR_TUNE_STEERING_SLEW) ==
 		CAR_STEERING_SLEW_PER_S);
 	Test_TuneValue(CAR_TUNE_STEERING_SLEW, 800.0f);
+	Test_TuneValue(CAR_TUNE_STEERING_LIMIT, 60.0f);
 	sample.dev = 1.0f;
 	sample.k = 0.1f;
 	Race_Init();
@@ -732,6 +746,8 @@ static void Test_SteeringSpeed(void)
 
 	CarTuning_Reset();
 	Test_TuneValue(CAR_TUNE_STEERING_SLEW, 800.0f);
+	Test_TuneValue(CAR_TUNE_STEERING_LIMIT, 60.0f);
+	Test_TuneValue(CAR_TUNE_TURN_THRESHOLD, 30.0f);
 	Test_TuneValue(CAR_TUNE_DRIVE_SPEED, 600.0f);
 	Test_TuneValue(CAR_TUNE_TURN_SPEED, 400.0f);
 	Race_Init();
@@ -795,7 +811,8 @@ static void Test_SlopeDriveLimits(void)
 		assert(Race_GetOutput().drive_speed_mm_s <= MOTOR_MAX_SPEED_MM_S);
 	}
 
-	assert(Race_GetOutput().drive_speed_mm_s == MOTOR_MAX_SPEED_MM_S);
+	assert(fabsf(Race_GetOutput().drive_speed_mm_s -
+		MOTOR_MAX_SPEED_MM_S) < 0.01f);
 	Race_Stop(false);
 	Test_TuneValue(CAR_TUNE_DEGRADED_SPEED, 20.0f);
 	sample = Test_Sample();
@@ -844,7 +861,8 @@ static void Test_Tuning(void)
 	assert(fabsf(CarTuning_Get(CAR_TUNE_DOWNHILL_SCALE) -
 		CAR_DOWNHILL_SPEED_SCALE) < 0.00001f);
 	assert(CarTuning_Get(CAR_TUNE_DIFF_THRESHOLD) == CAR_DIFF_THRESHOLD);
-	assert(CarTuning_Get(CAR_TUNE_DIFF_MAX_RATIO) == CAR_DIFF_MAX_RATIO);
+	assert(fabsf(CarTuning_Get(CAR_TUNE_DIFF_MAX_RATIO) -
+		CAR_DIFF_MAX_RATIO) < 0.00001f);
 
 	/* 连续步进越过上下限时钳位。 */
 	for (index = 0U; index < 512U; index++)
@@ -852,7 +870,8 @@ static void Test_Tuning(void)
 		CarTuning_Step(CAR_TUNE_DRIVE_SPEED, true);
 	}
 
-	assert(CarTuning_Get(CAR_TUNE_DRIVE_SPEED) == MOTOR_MAX_SPEED_MM_S);
+	assert(fabsf(CarTuning_Get(CAR_TUNE_DRIVE_SPEED) -
+		MOTOR_MAX_SPEED_MM_S) < 0.01f);
 
 	for (index = 0U; index < 512U; index++)
 	{
@@ -909,11 +928,14 @@ static void Test_Tuning(void)
 	assert(Race_Start(&sample, 0U));
 	Race_Update(&sample, 10U, 1.0f);
 	turn = Race_GetOutput().turn_target;
-	assert(fabsf(turn - 13.0f) < 0.00001f);
+	assert(fabsf(turn - (CAR_POSITION_GAIN * 0.2f +
+		CAR_HEADING_GAIN * 0.03f)) < 0.00001f);
 	CarTuning_Step(CAR_TUNE_POSITION_GAIN, true);
 	Race_Update(&sample, 20U, 1.0f);
-	turn = Race_GetOutput().turn_target;
-	assert(fabsf(turn - 14.0f) < 0.00001f);
+	assert(Race_GetOutput().turn_target > turn);
+	assert(fabsf(Race_GetOutput().turn_target -
+		(CarTuning_Get(CAR_TUNE_POSITION_GAIN) * 0.2f +
+		CarTuning_Get(CAR_TUNE_HEADING_GAIN) * 0.03f)) < 0.00001f);
 	Race_Stop(false);
 
 	CarTuning_Reset();
