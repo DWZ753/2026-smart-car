@@ -28,10 +28,10 @@ static const menu_page_t menu_pages[] =
 		"Turn thresh", "Up scale", "Crest scale", "Down scale",
 		"Steer slew", "Diff start", "Diff ratio", "Stage"}},
 	{MENU_TUNE_ROWS, {"- Debug tune", "Start", "Stop",
-		"Drive speed", "Turn speed",
-		"Degr speed", "KP", "KH", "Limit", "Valid min",
-		"Turn thresh", "Up scale", "Crest scale", "Down scale",
-		"Steer slew", "Diff start", "Diff ratio", "Restore defaults"}}
+		"Drive speed", "Turn speed", "Degr speed", "KP", "KH", "Limit",
+		"Valid min", "Turn thresh", "Up scale", "Crest scale",
+		"Down scale", "Steer slew", "Diff start", "Diff ratio",
+		"Restore defaults"}}
 };
 
 /* 列表页必须从 RUN 连续排列到 RAW 之前，RAW 为独立整屏页面。 */
@@ -63,6 +63,28 @@ static void MenuData_Float(char *text_p, size_t capacity, float value,
 
 	snprintf(text_p, capacity, "%c%ld.%0*ld", value < 0.0f ? '-' : '+',
 		(long)(raw / scale), precision, (long)(raw % scale));
+}
+
+/** @brief Control 与 Debug tune 共用参数数值格式化。
+ * @param id 参数编号。
+ * @param text_p 输出缓冲。
+ * @param capacity 输出容量。
+ * @retval 无。
+ */
+static void MenuData_TuneValue(car_tune_id_e id, char *text_p,
+	size_t capacity)
+{
+	if (id == CAR_TUNE_UPHILL_SCALE ||
+		id == CAR_TUNE_CREST_SCALE || id == CAR_TUNE_DOWNHILL_SCALE ||
+		id == CAR_TUNE_DIFF_MAX_RATIO)
+	{
+		MenuData_Float(text_p, capacity, CarTuning_Get(id), 100);
+	}
+	else
+	{
+		snprintf(text_p, capacity, "%ld",
+			(long)roundf(CarTuning_Get(id)));
+	}
 }
 
 uint8_t MenuData_Count(car_menu_page_e page)
@@ -190,29 +212,25 @@ void MenuData_Value(car_menu_page_e page, uint8_t row,
 				(model_p->slope.ready ? "YES" : "WAIT"));
 		}
 	}
-	else
+	else if (page == CAR_MENU_CONTROL)
 	{
-		/* Control 与 Debug tune 共用参数顺序、数值来源及显示格式。 */
 		if (row >= 1U && row <= (uint8_t)CAR_TUNE_COUNT)
 		{
-			car_tune_id_e id = (car_tune_id_e)(row - 1U);
-
-			if (id == CAR_TUNE_UPHILL_SCALE ||
-				id == CAR_TUNE_CREST_SCALE || id == CAR_TUNE_DOWNHILL_SCALE ||
-				id == CAR_TUNE_DIFF_MAX_RATIO)
-			{
-				MenuData_Float(text_p, capacity,
-					CarTuning_Get(id), 100);
-			}
-			else
-			{
-				snprintf(text_p, capacity, "%ld",
-					(long)roundf(CarTuning_Get(id)));
-			}
+			MenuData_TuneValue((car_tune_id_e)(row - 1U),
+				text_p, capacity);
 		}
-		else if (page == CAR_MENU_CONTROL)
+		else
 		{
 			snprintf(text_p, capacity, "%u", CAR_STAGE);
+		}
+	}
+	else
+	{
+		/* CAR_MENU_TUNE：参数行已重映射到 Control 行号，恢复默认行留空。 */
+		if (row >= 1U && row <= (uint8_t)CAR_TUNE_COUNT)
+		{
+			MenuData_TuneValue((car_tune_id_e)(row - 1U),
+				text_p, capacity);
 		}
 	}
 }

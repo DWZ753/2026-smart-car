@@ -43,6 +43,7 @@ typedef struct
 	char message[21];
 	bool popup;
 	bool tune_edit;
+	bool tune_reset_pending;
 	bool dirty;
 	bool animating;
 	uint8_t raw[VISION_RAW_BYTES];
@@ -90,6 +91,7 @@ static void Menu_Open(car_menu_page_e page)
 	menu_state.label_y = 64.0f;
 	menu_state.popup = false;
 	menu_state.tune_edit = false;
+	menu_state.tune_reset_pending = false;
 	menu_state.message[0] = '\0';
 	menu_state.dirty = true;
 }
@@ -475,10 +477,11 @@ car_menu_action_e Menu_KeyEvent(uint32_t keys)
 
 	if ((keys & CAR_MENU_KEY_BACK) != 0U)
 	{
-		/* 调参编辑中的返回键只退出编辑，不发布停止。 */
-		if (menu_state.tune_edit)
+		/* 调参编辑/恢复确认中的返回键只取消，不发布停止。 */
+		if (menu_state.tune_edit || menu_state.tune_reset_pending)
 		{
 			menu_state.tune_edit = false;
+			menu_state.tune_reset_pending = false;
 			menu_state.popup = false;
 			menu_state.dirty = true;
 
@@ -508,6 +511,13 @@ car_menu_action_e Menu_KeyEvent(uint32_t keys)
 			menu_state.tune_edit = false;
 			menu_state.popup = false;
 		}
+		else if (menu_state.tune_reset_pending)
+		{
+			menu_state.tune_reset_pending = false;
+			menu_state.popup = false;
+			CarTuning_Reset();
+			Menu_ShowMessage("Defaults restored");
+		}
 		else if (menu_state.popup)
 		{
 			menu_state.popup = false;
@@ -533,8 +543,8 @@ car_menu_action_e Menu_KeyEvent(uint32_t keys)
 		{
 			if (row >= (uint8_t)MENU_TUNE_RESTORE_ROW)
 			{
-				CarTuning_Reset();
-				Menu_ShowMessage("Defaults restored");
+				Menu_ShowMessage("Reset? 3=OK 4=No");
+				menu_state.tune_reset_pending = true;
 			}
 			else
 			{
@@ -609,6 +619,7 @@ void Menu_ShowMessage(const char *message_p)
 	snprintf(menu_state.message, sizeof(menu_state.message), "%s", message_p);
 	menu_state.popup = true;
 	menu_state.tune_edit = false;
+	menu_state.tune_reset_pending = false;
 	menu_state.dirty = true;
 }
 
