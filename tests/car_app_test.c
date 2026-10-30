@@ -271,7 +271,7 @@ int main(void)
 	app_mock.key_callback(3U);
 	Car_Update();
 	assert(!Race_GetOutput().enabled);
-	app_mock.now_ms += 60U;
+	app_mock.now_ms += CAR_VISION_SLOW_MS + 10U;
 	app_mock.action = CAR_MENU_ACTION_START;
 	app_mock.key_callback(2U);
 	Car_Update();

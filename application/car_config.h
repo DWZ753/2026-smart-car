@@ -35,9 +35,12 @@
 
 /* 以下是待实车标定的低速起始值，不是已经验证的比赛参数。 */
 #define CAR_CONTROL_PERIOD_MS 10U
-#define CAR_VISION_SLOW_MS 50U
-#define CAR_VISION_STOP_MS 100U
-#define CAR_VALID_MIN 15U
+#define CAR_VISION_SLOW_MS 80U
+#define CAR_VISION_STOP_MS 300U
+/* Valid min 现在是转向权限满值门限，不再作为几何可用门限。 */
+#define CAR_VALID_MIN 40U
+#define CAR_LOST_DECAY_MS 300U
+#define CAR_RECOVER_FRAMES 3U
 #define CAR_ELEMENT_CONF_MIN 70U
 #define CAR_START_GUARD_MS 2000U
 #define CAR_MARK_CONFIRM_FRAMES 5U

@@ -77,6 +77,7 @@ python tools\run_software_tests.py
 
 [分析资料索引](analysis_index.md)汇总当前 PVC 方案、PID 问题及历史分析证据。
 当前按低速开环、视觉 dev/k 跟踪和 IMU pitch 坡道判断推进。
+视觉帧格式、字段语义与发送示例见 [视觉串口通信协议](modules/vision/vision.md)。
 
 ## OLED 菜单
 

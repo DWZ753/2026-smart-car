@@ -272,20 +272,20 @@ static void Test_RaceFault(void)
 	Race_Update(&sample, 20U, 1.0f);
 	assert(Race_GetOutput().enabled);
 	sample.sample_id++;
-	sample.received_ms = 100U;
-	Race_Update(&sample, 100U, 1.0f);
+	sample.received_ms = 300U;
+	Race_Update(&sample, 300U, 1.0f);
 	assert(Race_GetOutput().phase == RACE_FAULT);
 	assert(!Race_GetOutput().enabled);
 	sample.lost = false;
 	sample.sample_id++;
-	sample.received_ms = 110U;
-	Race_Update(&sample, 110U, 1.0f);
+	sample.received_ms = 310U;
+	Race_Update(&sample, 310U, 1.0f);
 	assert(!Race_GetOutput().enabled);
-	assert(Race_Start(&sample, 110U));
+	assert(Race_Start(&sample, 310U));
 	Race_Stop(false);
-	sample.received_ms = 120U;
+	sample.received_ms = 320U;
 	sample.sample_id++;
-	Race_Update(&sample, 120U, 1.0f);
+	Race_Update(&sample, 320U, 1.0f);
 	assert(!Race_GetOutput().enabled);
 
 	sample = Test_Sample();
@@ -293,7 +293,7 @@ static void Test_RaceFault(void)
 	assert(Race_Start(&sample, sample.received_ms));
 	Race_Update(&sample, UINT32_MAX - 40U, 1.0f);
 	assert(Race_GetOutput().enabled);
-	Race_Update(&sample, 49U, 1.0f);
+	Race_Update(&sample, 249U, 1.0f);
 	assert(!Race_GetOutput().enabled);
 
 	sample = Test_Sample();
@@ -702,11 +702,13 @@ static void Test_SteeringSlew(void)
 	Test_ControlStep(&sample, 295U);
 	assert(Race_GetOutput().turn_right == 42.0f);
 
-	/* 显式丢线及观测变旧时冻结当前输出，不能继续追赶旧目标。 */
+	/* 明确丢线时保持并线性衰减，300 ms 后才故障。 */
 	sample.lost = true;
 	Test_ControlStep(&sample, 305U);
-	assert(Race_GetOutput().turn_right == 42.0f);
-	assert(Race_GetOutput().turn_target == 42.0f);
+	assert(fabsf(Race_GetOutput().turn_target -
+		42.0f * (1.0f - 10.0f / (float)CAR_LOST_DECAY_MS)) < 0.01f);
+	assert(fabsf(Race_GetOutput().turn_right -
+		Race_GetOutput().turn_target) < 0.01f);
 	Test_TuneValue(CAR_TUNE_STEERING_LIMIT, 20.0f);
 	Race_Update(&sample, 315U, 1.0f);
 	assert(Race_GetOutput().turn_right == 20.0f);
@@ -715,18 +717,23 @@ static void Test_SteeringSlew(void)
 	Test_TuneValue(CAR_TUNE_STEERING_LIMIT, 60.0f);
 	Test_ControlStep(&sample, 325U);
 	assert(Race_GetOutput().turn_right == 30.0f);
+
+	/* SLOW=80：50 ms 仍在跟踪；80 ms 后冻结当前舵量，300 ms 故障。 */
 	Race_Update(&sample, 375U, 1.0f);
-	assert(Race_GetOutput().turn_right == 30.0f);
-	Race_Update(&sample, 425U, 1.0f);
+	assert(Race_GetOutput().turn_right == 50.0f);
+	Race_Update(&sample, 405U, 1.0f);
+	assert(Race_GetOutput().turn_right == 50.0f);
+	assert(Race_GetOutput().turn_target == 50.0f);
+	Race_Update(&sample, 625U, 1.0f);
 	assert(Race_GetOutput().phase == RACE_FAULT);
 	assert(Race_GetOutput().turn_right == 0.0f);
 	assert(Race_GetOutput().turn_target == 0.0f);
 
 	/* 设为 0 恢复直通；上下界与恢复默认均可通过调参入口验证。 */
-	sample.received_ms = 435U;
-	assert(Race_Start(&sample, 435U));
+	sample.received_ms = 635U;
+	assert(Race_Start(&sample, 635U));
 	Test_TuneValue(CAR_TUNE_STEERING_SLEW, 0.0f);
-	Test_ControlStep(&sample, 445U);
+	Test_ControlStep(&sample, 645U);
 	assert(Race_GetOutput().turn_right == 60.0f);
 	CarTuning_Step(CAR_TUNE_STEERING_SLEW, false);
 	assert(CarTuning_Get(CAR_TUNE_STEERING_SLEW) == 0.0f);
@@ -941,6 +948,310 @@ static void Test_Tuning(void)
 	CarTuning_Reset();
 }
 
+/** @brief 明确丢线保持并线性衰减，150 ms 内不故障。 */
+static void Test_LostHoldDecay(void)
+{
+	vision_sample_t sample = Test_Sample();
+	uint32_t now_ms = 0U;
+	float held_turn = 0.0f;
+
+	CarTuning_Reset();
+	Test_TuneValue(CAR_TUNE_STEERING_SLEW, 800.0f);
+	Test_TuneValue(CAR_TUNE_STEERING_LIMIT, 80.0f);
+	sample.dev = 1.0f;
+	sample.k = 0.0f;
+	Race_Init();
+	assert(Race_Start(&sample, 0U));
+
+	for (now_ms = 10U; now_ms <= 500U; now_ms += 10U)
+	{
+		sample.sample_id++;
+		sample.received_ms = now_ms;
+		Race_Update(&sample, now_ms, 1.0f);
+	}
+
+	held_turn = Race_GetOutput().turn_right;
+	assert(held_turn > 60.0f);
+
+	/* lost 从最后一个可用帧 500 ms 起算。 */
+	now_ms = 510U;
+	sample.sample_id++;
+	sample.received_ms = now_ms;
+	sample.lost = true;
+	Race_Update(&sample, now_ms, 1.0f);
+	assert(Race_GetOutput().enabled);
+	assert(Race_GetOutput().turn_right < held_turn);
+	assert(Race_GetOutput().turn_right > 0.0f);
+
+	for (now_ms = 520U; now_ms <= 650U; now_ms += 10U)
+	{
+		sample.sample_id++;
+		sample.received_ms = now_ms;
+		Race_Update(&sample, now_ms, 1.0f);
+	}
+
+	assert(Race_GetOutput().enabled);
+	assert(Race_GetOutput().phase != RACE_FAULT);
+	assert(Race_GetOutput().turn_right < held_turn * 0.6f);
+
+	now_ms = 800U;
+	sample.sample_id++;
+	sample.received_ms = now_ms;
+	Race_Update(&sample, now_ms, 1.0f);
+	assert(Race_GetOutput().phase == RACE_FAULT);
+	assert(!Race_GetOutput().enabled);
+	Race_Stop(false);
+	CarTuning_Reset();
+}
+
+/** @brief 故障后连续 3 个新的可用帧自动恢复，重复/丢线帧不计数。 */
+static void Test_AutoRecovery(void)
+{
+	vision_sample_t sample = Test_Sample();
+	uint32_t now_ms = 0U;
+
+	CarTuning_Reset();
+	Race_Init();
+	assert(Race_Start(&sample, 0U));
+	sample.lost = true;
+
+	for (now_ms = 10U; now_ms < CAR_VISION_STOP_MS; now_ms += 10U)
+	{
+		sample.sample_id++;
+		sample.received_ms = now_ms;
+		Race_Update(&sample, now_ms, 1.0f);
+	}
+
+	now_ms = CAR_VISION_STOP_MS;
+	sample.sample_id++;
+	sample.received_ms = now_ms;
+	Race_Update(&sample, now_ms, 1.0f);
+	assert(Race_GetOutput().phase == RACE_FAULT);
+	assert(!Race_GetOutput().enabled);
+
+	/* IMU 无效帧不累计恢复计数。 */
+	sample.lost = false;
+	sample.sample_id++;
+	sample.received_ms = 310U;
+	Race_Update(&sample, 310U, 0.0f);
+	assert(!Race_GetOutput().enabled);
+
+	sample.sample_id++;
+	sample.received_ms = 320U;
+	Race_Update(&sample, 320U, 1.0f);
+	assert(!Race_GetOutput().enabled);
+
+	/* 重复 seq 不计数。 */
+	sample.received_ms = 330U;
+	Race_Update(&sample, 330U, 1.0f);
+	assert(!Race_GetOutput().enabled);
+
+	/* 新的丢线帧清零恢复计数。 */
+	sample.lost = true;
+	sample.sample_id++;
+	sample.received_ms = 340U;
+	Race_Update(&sample, 340U, 1.0f);
+	assert(!Race_GetOutput().enabled);
+
+	sample.lost = false;
+	sample.sample_id++;
+	sample.received_ms = 350U;
+	Race_Update(&sample, 350U, 1.0f);
+	assert(!Race_GetOutput().enabled);
+	sample.sample_id++;
+	sample.received_ms = 360U;
+	Race_Update(&sample, 360U, 1.0f);
+	assert(!Race_GetOutput().enabled);
+	sample.sample_id++;
+	sample.received_ms = 370U;
+	Race_Update(&sample, 370U, 1.0f);
+	assert(Race_GetOutput().enabled);
+	assert(Race_GetOutput().phase == RACE_RUN);
+
+	/* 人工停止后即使视觉恢复也不能自动重新起步。 */
+	Race_Stop(false);
+	for (now_ms = 380U; now_ms <= 400U; now_ms += 10U)
+	{
+		sample.sample_id++;
+		sample.received_ms = now_ms;
+		Race_Update(&sample, now_ms, 1.0f);
+		assert(!Race_GetOutput().enabled);
+	}
+
+	CarTuning_Reset();
+}
+
+/** @brief 故障帧被消费，同一 sample_id 不能重复累计恢复计数。 */
+static void Test_RecoveryFrameConsumption(void)
+{
+	vision_sample_t sample = Test_Sample();
+
+	CarTuning_Reset();
+	Race_Init();
+	assert(Race_Start(&sample, 0U));
+
+	/* IMU 无效触发故障，当前帧可用且是 fresh。 */
+	Race_Update(&sample, 10U, 0.0f);
+	assert(Race_GetOutput().phase == RACE_FAULT);
+
+	/* 同一帧在后续周期不能反复计入恢复。 */
+	Race_Update(&sample, 20U, 1.0f);
+	Race_Update(&sample, 30U, 1.0f);
+	Race_Update(&sample, 40U, 1.0f);
+	assert(!Race_GetOutput().enabled);
+
+	/* 三个新的可用帧后才恢复。 */
+	sample.sample_id++;
+	sample.received_ms = 50U;
+	Race_Update(&sample, 50U, 1.0f);
+	assert(!Race_GetOutput().enabled);
+	sample.sample_id++;
+	sample.received_ms = 60U;
+	Race_Update(&sample, 60U, 1.0f);
+	assert(!Race_GetOutput().enabled);
+	sample.sample_id++;
+	sample.received_ms = 70U;
+	Race_Update(&sample, 70U, 1.0f);
+	assert(Race_GetOutput().enabled);
+	assert(Race_GetOutput().phase == RACE_RUN);
+	Race_Stop(false);
+	CarTuning_Reset();
+}
+
+/** @brief valid 只缩放转向权限，低 valid 不阻止启动或触发故障。 */
+static void Test_ValidAuthority(void)
+{
+	vision_sample_t sample = Test_Sample();
+	uint32_t now_ms = 0U;
+	float full = 0.0f;
+
+	CarTuning_Reset();
+	Test_TuneValue(CAR_TUNE_STEERING_SLEW, 0.0f);
+	Test_TuneValue(CAR_TUNE_STEERING_LIMIT, 80.0f);
+	sample.dev = 0.5f;
+	sample.k = 0.0f;
+	sample.valid = 10U;
+	Race_Init();
+	assert(Race_Start(&sample, 0U));
+
+	for (now_ms = 10U; now_ms <= 200U; now_ms += 10U)
+	{
+		sample.sample_id++;
+		sample.received_ms = now_ms;
+		Race_Update(&sample, now_ms, 1.0f);
+		assert(Race_GetOutput().enabled);
+		assert(Race_GetOutput().phase != RACE_FAULT);
+	}
+
+	full = CAR_POSITION_GAIN * 0.5f;
+	assert(fabsf(Race_GetOutput().turn_target - full * 0.625f) < 0.01f);
+
+	sample.valid = 0U;
+	sample.sample_id++;
+	sample.received_ms = 210U;
+	Race_Update(&sample, 210U, 1.0f);
+	assert(fabsf(Race_GetOutput().turn_target - full * 0.5f) < 0.01f);
+
+	sample.valid = CAR_VALID_MIN;
+	sample.sample_id++;
+	sample.received_ms = 220U;
+	Race_Update(&sample, 220U, 1.0f);
+	assert(fabsf(Race_GetOutput().turn_target - full) < 0.01f);
+	Race_Stop(false);
+
+	/* elem=6 与 lost=1 一样保持并衰减，不立即故障。 */
+	CarTuning_Reset();
+	Test_TuneValue(CAR_TUNE_STEERING_SLEW, 0.0f);
+	sample = Test_Sample();
+	sample.dev = 1.0f;
+	sample.k = 0.0f;
+	Race_Init();
+	assert(Race_Start(&sample, 0U));
+
+	for (now_ms = 10U; now_ms <= 100U; now_ms += 10U)
+	{
+		sample.sample_id++;
+		sample.received_ms = now_ms;
+		Race_Update(&sample, now_ms, 1.0f);
+	}
+
+	assert(Race_GetOutput().turn_target > 60.0f);
+	sample.elem = 6U;
+	sample.sample_id++;
+	sample.received_ms = 110U;
+	Race_Update(&sample, 110U, 1.0f);
+	assert(Race_GetOutput().enabled);
+	assert(Race_GetOutput().phase != RACE_FAULT);
+	assert(Race_GetOutput().turn_target < 70.0f);
+	assert(Race_GetOutput().turn_target > 0.0f);
+	Race_Stop(false);
+	CarTuning_Reset();
+}
+
+/** @brief 终点停车过程中故障，恢复后仍执行停车而不是重新起步。 */
+static void Test_StoppingRecovery(void)
+{
+	vision_sample_t sample = Test_Sample();
+	uint32_t now_ms = 0U;
+	uint8_t index = 0U;
+
+	CarTuning_Reset();
+	sample.elem = 0U;
+	Race_Init();
+	assert(Race_Start(&sample, 0U));
+
+	for (now_ms = 10U; now_ms <= 2100U; now_ms += 10U)
+	{
+		sample.sample_id++;
+		sample.received_ms = now_ms;
+		Race_Update(&sample, now_ms, 1.0f);
+	}
+
+	assert(Race_GetOutput().phase == RACE_RUN);
+
+	sample.elem = 5U;
+	sample.conf = 90U;
+
+	for (index = 0U; index < CAR_FINISH_CONFIRM_FRAMES; index++)
+	{
+		now_ms += 10U;
+		sample.sample_id++;
+		sample.received_ms = now_ms;
+		Race_Update(&sample, now_ms, 1.0f);
+	}
+
+	assert(Race_GetOutput().phase == RACE_STOPPING);
+
+	/* 停车过程中 IMU 失效，记录故障前阶段。 */
+	now_ms += 10U;
+	sample.sample_id++;
+	sample.received_ms = now_ms;
+	Race_Update(&sample, now_ms, 0.0f);
+	assert(Race_GetOutput().phase == RACE_FAULT);
+	assert(!Race_GetOutput().enabled);
+
+	sample.elem = 0U;
+
+	for (index = 0U; index < CAR_RECOVER_FRAMES; index++)
+	{
+		now_ms += 10U;
+		sample.sample_id++;
+		sample.received_ms = now_ms;
+		Race_Update(&sample, now_ms, 1.0f);
+	}
+
+	assert(Race_GetOutput().enabled);
+	assert(Race_GetOutput().phase == RACE_STOPPING);
+
+	now_ms += 10U;
+	sample.sample_id++;
+	sample.received_ms = now_ms;
+	Race_Update(&sample, now_ms, 1.0f);
+	assert(!Race_GetOutput().enabled);
+	assert(Race_GetOutput().phase == RACE_DONE);
+	CarTuning_Reset();
+}
+
 int main(void)
 {
 	Test_Vision();
@@ -949,6 +1260,11 @@ int main(void)
 	Test_SteeringSpeed();
 	Test_SlopeDriveLimits();
 	Test_RaceFault();
+	Test_LostHoldDecay();
+	Test_AutoRecovery();
+	Test_RecoveryFrameConsumption();
+	Test_ValidAuthority();
+	Test_StoppingRecovery();
 	Test_TuningOutputLimits();
 	Test_Finish();
 	Test_Slope();

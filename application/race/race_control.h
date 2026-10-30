@@ -5,7 +5,7 @@
 #include <stdint.h>
 #include "vision.h"
 
-/** 无里程的比赛状态；停止态只能通过本地显式启动退出。 */
+/** 无里程的比赛状态；READY/DONE 只能显式启动，FAULT 可由视觉恢复自动退出。 */
 typedef enum
 {
 	RACE_READY,
@@ -33,13 +33,15 @@ void Race_Init(void);
 /** @brief 本地显式启动。
  * @param sample_p 最新视觉观测。
  * @param now_ms 当前毫秒时刻。
- * @retval true 新鲜且可靠，已进入起步状态。
+ * @retval true 新鲜且几何可用，已进入起步状态。
+ * @note valid 只缩放转向权限，不再阻止启动。
  */
 bool Race_Start(const vision_sample_t *sample_p, uint32_t now_ms);
 
 /** @brief 停止并锁定输出。
  * @param fault true 进入故障停止，false 返回待启动。
  * @retval 无。
+ * @note FAULT 在连续可用帧后可自动恢复；人工停止不会自动恢复。
  */
 void Race_Stop(bool fault);
 
